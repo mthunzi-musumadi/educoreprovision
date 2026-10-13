@@ -1,0 +1,6 @@
+{
+  "name": "Educore Provision",
+  "description": "ICT Equipment Purchase Scheme portal for Educore Services schools with role-based approvals, legal compliance, and payroll deduction management.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
