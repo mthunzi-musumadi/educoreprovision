@@ -12,6 +12,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 async function startServer() {
+  await dbService.initialize();
+
   const app = express();
   const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
@@ -94,7 +96,7 @@ async function startServer() {
   });
 
   // POST /api/applications (Part 1 submission)
-  app.post('/api/applications', (req, res) => {
+  app.post('/api/applications', async (req, res) => {
     try {
       const actorUser = (req as any).actorUser as User | undefined;
       if (!actorUser) {
@@ -102,7 +104,7 @@ async function startServer() {
       }
 
       const clientIp = req.headers['x-forwarded-for']?.toString() || req.socket.remoteAddress;
-      const result = dbService.submitPart1(actorUser, {
+      const result = await dbService.submitPart1(actorUser, {
         tier: req.body.tier,
         repaymentPeriod: req.body.repaymentPeriod,
         estimatedMonthlyAmount: req.body.estimatedMonthlyAmount,
@@ -122,7 +124,7 @@ async function startServer() {
   });
 
   // POST /api/applications/:id/endorse (Part 2 Head Teacher review)
-  app.post('/api/applications/:id/endorse', (req, res) => {
+  app.post('/api/applications/:id/endorse', async (req, res) => {
     try {
       const actorUser = (req as any).actorUser as User | undefined;
       if (!actorUser) {
@@ -130,7 +132,7 @@ async function startServer() {
       }
 
       const { comments, actionType } = req.body;
-      const result = dbService.endorsePart2(
+      const result = await dbService.endorsePart2(
         actorUser,
         req.params.id,
         comments,
@@ -148,7 +150,7 @@ async function startServer() {
   });
 
   // POST /api/applications/:id/clearance (Part 3 HR Review)
-  app.post('/api/applications/:id/clearance', (req, res) => {
+  app.post('/api/applications/:id/clearance', async (req, res) => {
     try {
       const actorUser = (req as any).actorUser as User | undefined;
       if (!actorUser) {
@@ -156,7 +158,7 @@ async function startServer() {
       }
 
       const { checklist, comments, isRejecting } = req.body;
-      const result = dbService.clearPart3(actorUser, req.params.id, {
+      const result = await dbService.clearPart3(actorUser, req.params.id, {
         checklist,
         comments,
         isRejecting: Boolean(isRejecting),
@@ -173,7 +175,7 @@ async function startServer() {
   });
 
   // POST /api/applications/:id/signoff (Part 4 IT Finalization)
-  app.post('/api/applications/:id/signoff', (req, res) => {
+  app.post('/api/applications/:id/signoff', async (req, res) => {
     try {
       const actorUser = (req as any).actorUser as User | undefined;
       if (!actorUser) {
@@ -181,7 +183,7 @@ async function startServer() {
       }
 
       const { serialNumber, monthlyAmount, startDate, endDate, comments, isRejecting } = req.body;
-      const result = dbService.signoffPart4(actorUser, req.params.id, {
+      const result = await dbService.signoffPart4(actorUser, req.params.id, {
         serialNumber,
         monthlyAmount,
         startDate,
@@ -201,14 +203,14 @@ async function startServer() {
   });
 
   // POST /api/applications/:id/withdraw
-  app.post('/api/applications/:id/withdraw', (req, res) => {
+  app.post('/api/applications/:id/withdraw', async (req, res) => {
     try {
       const actorUser = (req as any).actorUser as User | undefined;
       if (!actorUser) {
         return res.status(401).json({ error: 'Unauthorized: missing x-user-id header.' });
       }
 
-      const result = dbService.withdrawApplication(actorUser, req.params.id);
+      const result = await dbService.withdrawApplication(actorUser, req.params.id);
       if (!result.success) {
         return res.status(400).json({ error: result.error });
       }
@@ -220,9 +222,9 @@ async function startServer() {
   });
 
   // POST /api/database/reset
-  app.post('/api/database/reset', (req, res) => {
+  app.post('/api/database/reset', async (req, res) => {
     try {
-      const resetData = dbService.resetDatabase();
+      const resetData = await dbService.resetDatabase();
       res.json({ success: true, message: 'Database reset to initial seed benchmark state.', resetData });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -248,4 +250,7 @@ async function startServer() {
   });
 }
 
-startServer();
+startServer().catch((err) => {
+  console.error('Failed to start Educore Provision server:', err);
+  process.exitCode = 1;
+});

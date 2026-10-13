@@ -1,6 +1,4 @@
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import { Pool } from 'pg';
 import {
   ApplicationStatus,
   ApplicationTimelineEvent,
@@ -20,12 +18,6 @@ import {
   VERBATIM_LEGAL_POLICY,
 } from '../src/data/mockData.ts';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-const DATA_DIR = path.resolve(__dirname, '../.data');
-const DB_FILE = path.resolve(DATA_DIR, 'educore_db.json');
-
 interface DatabaseSchema {
   version: string;
   lastUpdated: string;
@@ -35,44 +27,66 @@ interface DatabaseSchema {
   timelineEvents: ApplicationTimelineEvent[];
 }
 
-function ensureDataDir() {
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
-  }
-}
+const pool = new Pool({
+  host: process.env.PGHOST || 'localhost',
+  port: process.env.PGPORT ? Number.parseInt(process.env.PGPORT, 10) : 5432,
+  database: process.env.PGDATABASE || 'educoreprovision',
+  user: process.env.PGUSER || 'postgres',
+  password: process.env.PGPASSWORD,
+});
 
 function loadDatabase(): DatabaseSchema {
-  ensureDataDir();
-  if (fs.existsSync(DB_FILE)) {
-    try {
-      const data = fs.readFileSync(DB_FILE, 'utf-8');
-      return JSON.parse(data) as DatabaseSchema;
-    } catch (err) {
-      console.error('Failed to parse database file, falling back to initial seed data:', err);
-    }
+  if (!databaseState) {
+    throw new Error('PostgreSQL database has not been initialized.');
   }
-
-  // Seed default data if database file does not exist
-  const initialDb: DatabaseSchema = {
-    version: '1.0.0',
-    lastUpdated: new Date().toISOString(),
-    institutions: INSTITUTIONS,
-    users: MOCK_USERS,
-    applications: INITIAL_APPLICATIONS,
-    timelineEvents: INITIAL_TIMELINE,
-  };
-
-  saveDatabase(initialDb);
-  return initialDb;
+  return structuredClone(databaseState);
 }
 
-function saveDatabase(db: DatabaseSchema) {
-  ensureDataDir();
+let databaseState: DatabaseSchema | undefined;
+
+async function saveDatabase(db: DatabaseSchema): Promise<void> {
   db.lastUpdated = new Date().toISOString();
-  fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2), 'utf-8');
+  await pool.query(
+    `INSERT INTO educore_app_state (id, data, updated_at)
+     VALUES (1, $1::jsonb, NOW())
+     ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()`,
+    [JSON.stringify(db)]
+  );
+  databaseState = db;
 }
 
 export const dbService = {
+  async initialize(): Promise<void> {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS educore_app_state (
+        id SMALLINT PRIMARY KEY CHECK (id = 1),
+        data JSONB NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+
+    const initialDb: DatabaseSchema = {
+      version: '1.0.0',
+      lastUpdated: new Date().toISOString(),
+      institutions: INSTITUTIONS,
+      users: MOCK_USERS,
+      applications: INITIAL_APPLICATIONS,
+      timelineEvents: INITIAL_TIMELINE,
+    };
+    await pool.query(
+      'INSERT INTO educore_app_state (id, data) VALUES (1, $1::jsonb) ON CONFLICT (id) DO NOTHING',
+      [JSON.stringify(initialDb)]
+    );
+
+    const result = await pool.query<{ data: DatabaseSchema }>(
+      'SELECT data FROM educore_app_state WHERE id = 1'
+    );
+    if (!result.rows[0]) {
+      throw new Error('PostgreSQL application state could not be initialized.');
+    }
+    databaseState = result.rows[0].data;
+  },
+
   getInstitutions(): Institution[] {
     const db = loadDatabase();
     return db.institutions;
@@ -135,7 +149,7 @@ export const dbService = {
       .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
   },
 
-  submitPart1(
+  async submitPart1(
     actorUser: User,
     params: {
       tier: LaptopTier;
@@ -145,7 +159,7 @@ export const dbService = {
       ipAddress?: string;
       userAgent?: string;
     }
-  ): { success: boolean; application?: PurchaseApplication; error?: string } {
+  ): Promise<{ success: boolean; application?: PurchaseApplication; error?: string }> {
     if (!params.termsAccepted) {
       return { success: false, error: 'You must accept the legal terms and payroll deduction mandate.' };
     }
@@ -210,16 +224,16 @@ export const dbService = {
     };
     db.timelineEvents.push(newEvent);
 
-    saveDatabase(db);
+    await saveDatabase(db);
     return { success: true, application: newApp };
   },
 
-  endorsePart2(
+  async endorsePart2(
     actorUser: User,
     applicationId: string,
     comments: string,
     actionType: 'ENDORSE' | 'REVISION' | 'REJECT'
-  ): { success: boolean; application?: PurchaseApplication; error?: string } {
+  ): Promise<{ success: boolean; application?: PurchaseApplication; error?: string }> {
     const db = loadDatabase();
     const appIndex = db.applications.findIndex((a) => a.id === applicationId);
     if (appIndex === -1) return { success: false, error: 'Application not found.' };
@@ -276,11 +290,11 @@ export const dbService = {
       createdAt: timestamp,
     });
 
-    saveDatabase(db);
+    await saveDatabase(db);
     return { success: true, application: updatedApp };
   },
 
-  clearPart3(
+  async clearPart3(
     actorUser: User,
     applicationId: string,
     params: {
@@ -288,7 +302,7 @@ export const dbService = {
       comments: string;
       isRejecting: boolean;
     }
-  ): { success: boolean; application?: PurchaseApplication; error?: string } {
+  ): Promise<{ success: boolean; application?: PurchaseApplication; error?: string }> {
     const db = loadDatabase();
     const appIndex = db.applications.findIndex((a) => a.id === applicationId);
     if (appIndex === -1) return { success: false, error: 'Application not found.' };
@@ -334,11 +348,11 @@ export const dbService = {
       createdAt: timestamp,
     });
 
-    saveDatabase(db);
+    await saveDatabase(db);
     return { success: true, application: updatedApp };
   },
 
-  signoffPart4(
+  async signoffPart4(
     actorUser: User,
     applicationId: string,
     params: {
@@ -349,7 +363,7 @@ export const dbService = {
       comments: string;
       isRejecting: boolean;
     }
-  ): { success: boolean; application?: PurchaseApplication; error?: string } {
+  ): Promise<{ success: boolean; application?: PurchaseApplication; error?: string }> {
     const db = loadDatabase();
     const appIndex = db.applications.findIndex((a) => a.id === applicationId);
     if (appIndex === -1) return { success: false, error: 'Application not found.' };
@@ -400,14 +414,14 @@ export const dbService = {
       createdAt: timestamp,
     });
 
-    saveDatabase(db);
+    await saveDatabase(db);
     return { success: true, application: updatedApp };
   },
 
-  withdrawApplication(
+  async withdrawApplication(
     actorUser: User,
     applicationId: string
-  ): { success: boolean; error?: string } {
+  ): Promise<{ success: boolean; error?: string }> {
     const db = loadDatabase();
     const appIndex = db.applications.findIndex((a) => a.id === applicationId);
     if (appIndex === -1) return { success: false, error: 'Application not found.' };
@@ -438,11 +452,11 @@ export const dbService = {
       createdAt: timestamp,
     });
 
-    saveDatabase(db);
+    await saveDatabase(db);
     return { success: true };
   },
 
-  resetDatabase(): DatabaseSchema {
+  async resetDatabase(): Promise<DatabaseSchema> {
     const resetDb: DatabaseSchema = {
       version: '1.0.0',
       lastUpdated: new Date().toISOString(),
@@ -451,7 +465,7 @@ export const dbService = {
       applications: INITIAL_APPLICATIONS,
       timelineEvents: INITIAL_TIMELINE,
     };
-    saveDatabase(resetDb);
+    await saveDatabase(resetDb);
     return resetDb;
   },
 };
