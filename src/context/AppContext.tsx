@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import {
   ApplicationStatus,
   ApplicationTimelineEvent,
@@ -28,6 +28,7 @@ interface AppContextType {
   getScopedApplications: () => PurchaseApplication[];
   getApplicationById: (id: string) => PurchaseApplication | undefined;
   getTimelineForApplication: (applicationId: string) => ApplicationTimelineEvent[];
+  refreshData: () => Promise<void>;
   
   // Workflow Actions
   submitPart1: (params: {
@@ -112,6 +113,30 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     applicationId?: string;
   }>({ type: null });
 
+  const currentUser = MOCK_USERS.find((u) => u.id === currentUserId) || MOCK_USERS[0];
+
+  // Fetch from backend API
+  const refreshData = useCallback(async () => {
+    try {
+      const res = await fetch('/api/applications', {
+        headers: {
+          'x-user-id': currentUserId,
+        },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setApplications(data);
+        localStorage.setItem(STORAGE_KEYS.APPLICATIONS, JSON.stringify(data));
+      }
+    } catch (e) {
+      // Backend request fallback to local state
+    }
+  }, [currentUserId]);
+
+  useEffect(() => {
+    refreshData();
+  }, [refreshData, currentUserId]);
+
   // Sync to local storage
   useEffect(() => {
     localStorage.setItem(STORAGE_KEYS.CURRENT_USER, currentUserId);
@@ -124,8 +149,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEYS.TIMELINE, JSON.stringify(timelineEvents));
   }, [timelineEvents]);
-
-  const currentUser = MOCK_USERS.find((u) => u.id === currentUserId) || MOCK_USERS[0];
 
   const switchUser = (userId: string) => {
     const user = MOCK_USERS.find((u) => u.id === userId);
@@ -145,7 +168,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setActiveModal({ type: null });
   };
 
-  const resetDemoData = () => {
+  const resetDemoData = async () => {
+    try {
+      await fetch('/api/database/reset', { method: 'POST' });
+    } catch (e) {}
+
     setApplications(INITIAL_APPLICATIONS);
     setTimelineEvents(INITIAL_TIMELINE);
     setCurrentUserId(MOCK_USERS[0].id);
@@ -265,6 +292,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       `Submitted request for ${LAPTOP_CONFIGS[tier].title} (${repaymentPeriod}) with verified legal agreement.`
     );
 
+    // Async persist to backend API
+    fetch('/api/applications', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-user-id': currentUser.id,
+      },
+      body: JSON.stringify({
+        tier,
+        repaymentPeriod,
+        estimatedMonthlyAmount,
+        termsAccepted,
+      }),
+    }).catch((e) => console.log('API sync', e));
+
     return { success: true, application: newApp };
   };
 
@@ -296,6 +338,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       'PENDING_HR_REVIEW',
       comments || 'Endorsed by Campus General Manager / Head Teacher.'
     );
+
+    fetch(`/api/applications/${applicationId}/endorse`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-user-id': currentUser.id,
+      },
+      body: JSON.stringify({ comments, actionType: 'ENDORSE' }),
+    }).catch((e) => console.log('API sync', e));
   };
 
   const requestRevisionPart2 = (applicationId: string, comments: string) => {
@@ -323,6 +374,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       'REVISION_REQUIRED',
       comments
     );
+
+    fetch(`/api/applications/${applicationId}/endorse`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-user-id': currentUser.id,
+      },
+      body: JSON.stringify({ comments, actionType: 'REVISION' }),
+    }).catch((e) => console.log('API sync', e));
   };
 
   const rejectPart2 = (applicationId: string, comments: string) => {
@@ -351,6 +411,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       'REJECTED',
       comments
     );
+
+    fetch(`/api/applications/${applicationId}/endorse`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-user-id': currentUser.id,
+      },
+      body: JSON.stringify({ comments, actionType: 'REJECT' }),
+    }).catch((e) => console.log('API sync', e));
   };
 
   // PART 3: HR Clearance
@@ -386,6 +455,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       'PENDING_IT_SIGNOFF',
       `HR Cleared: Debt ratio under 33% verified, probation cleared. Notes: ${comments || 'None'}`
     );
+
+    fetch(`/api/applications/${applicationId}/clearance`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-user-id': currentUser.id,
+      },
+      body: JSON.stringify({ checklist, comments, isRejecting: false }),
+    }).catch((e) => console.log('API sync', e));
   };
 
   const rejectPart3 = (applicationId: string, comments: string) => {
@@ -414,6 +492,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       'REJECTED',
       comments
     );
+
+    fetch(`/api/applications/${applicationId}/clearance`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-user-id': currentUser.id,
+      },
+      body: JSON.stringify({ comments, isRejecting: true }),
+    }).catch((e) => console.log('API sync', e));
   };
 
   // PART 4: Central IT Provisioning & Closure
@@ -462,6 +549,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       'APPROVED',
       `Asset tagged (${serialNumber}). Deduction: ZMW ${monthlyAmount.toFixed(2)}/mo (${startDate} to ${endDate}). Sealed document ready.`
     );
+
+    fetch(`/api/applications/${applicationId}/signoff`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-user-id': currentUser.id,
+      },
+      body: JSON.stringify({
+        serialNumber,
+        monthlyAmount,
+        startDate,
+        endDate,
+        comments,
+        isRejecting: false,
+      }),
+    }).catch((e) => console.log('API sync', e));
   };
 
   const rejectPart4 = (applicationId: string, comments: string) => {
@@ -490,6 +593,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       'REJECTED',
       comments
     );
+
+    fetch(`/api/applications/${applicationId}/signoff`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-user-id': currentUser.id,
+      },
+      body: JSON.stringify({ comments, isRejecting: true }),
+    }).catch((e) => console.log('API sync', e));
   };
 
   const withdrawApplication = (applicationId: string) => {
@@ -514,6 +626,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       'CLOSED',
       'Applicant withdrew the application.'
     );
+
+    fetch(`/api/applications/${applicationId}/withdraw`, {
+      method: 'POST',
+      headers: {
+        'x-user-id': currentUser.id,
+      },
+    }).catch((e) => console.log('API sync', e));
   };
 
   return (
@@ -528,6 +647,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         getScopedApplications,
         getApplicationById,
         getTimelineForApplication,
+        refreshData,
         submitPart1,
         endorsePart2,
         requestRevisionPart2,
