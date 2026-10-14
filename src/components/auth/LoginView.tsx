@@ -1,224 +1,203 @@
 import React, { useState } from 'react';
+import {
+  ShieldCheck,
+  User,
+  Building2,
+  ArrowRight,
+  KeyRound,
+} from 'lucide-react';
 import { useAppContext } from '../../context/AppContext';
-import { AlertCircle, Lock, User } from 'lucide-react';
+import { UserRole } from '../../types';
 
-interface DbDirectoryUser {
-  id: string;
-  entra_oid: string;
-  full_name: string;
-  email: string;
-  role: string;
-  institution_name: string;
-  institution_code: string;
+interface DemoPersona {
+  entraOid: string;
+  name: string;
+  role: UserRole;
+  title: string;
+  institution: string;
+  badgeColor: string;
+  description: string;
 }
 
+const DEMO_PERSONAS: DemoPersona[] = [
+  {
+    entraOid: '11111111-1111-4111-8111-111111111101',
+    name: 'Chanda Mwamba',
+    role: 'APPLICANT',
+    title: 'Senior Mathematics Teacher',
+    institution: 'Trident College',
+    badgeColor: 'bg-slate-100 text-slate-800',
+    description: 'Submit any of the 14 forms and track personal requests.',
+  },
+  {
+    entraOid: '11111111-1111-4111-8111-111111111102',
+    name: 'Mutale Bwalya',
+    role: 'APPLICANT',
+    title: 'Physics Teacher',
+    institution: 'Sentinel Kabitaka',
+    badgeColor: 'bg-slate-100 text-slate-800',
+    description: 'Test cross-school RLS isolation (cannot see Trident requests).',
+  },
+  {
+    entraOid: '22222222-2222-4222-8222-222222222201',
+    name: 'Kelvin Zulu',
+    role: 'LINE_MANAGER',
+    title: 'Head of Faculty - STEM',
+    institution: 'Trident College',
+    badgeColor: 'bg-purple-100 text-purple-800',
+    description: 'Step 1 reviewer for Exculpatory & Job Description forms at Trident.',
+  },
+  {
+    entraOid: '33333333-3333-4333-8333-333333333301',
+    name: 'Blair Kuhn',
+    role: 'HEAD_TEACHER',
+    title: 'Headmaster',
+    institution: 'Trident College',
+    badgeColor: 'bg-amber-100 text-amber-800',
+    description: 'Step 1 school endorsement for Trident IT, HR, Finance & Travel forms.',
+  },
+  {
+    entraOid: '33333333-3333-4333-8333-333333333302',
+    name: 'Jane Mwanza',
+    role: 'HEAD_TEACHER',
+    title: 'Head Teacher',
+    institution: 'Sentinel Kabitaka',
+    badgeColor: 'bg-amber-100 text-amber-800',
+    description: 'Step 1 school endorsement strictly scoped to Sentinel Kabitaka.',
+  },
+  {
+    entraOid: '44444444-4444-4444-8444-444444444401',
+    name: 'Thandiwe Phiri',
+    role: 'HR_MANAGER',
+    title: 'Group HR Manager',
+    institution: 'Educore Central Admin',
+    badgeColor: 'bg-blue-100 text-blue-800',
+    description: 'Central HR vetting & approval across all 9 HR & IT workflows.',
+  },
+  {
+    entraOid: '55555555-5555-4555-8555-555555555501',
+    name: 'Mulenga Banda',
+    role: 'IT_MANAGER',
+    title: 'Head of ICT & Infrastructure',
+    institution: 'Educore Central Admin',
+    badgeColor: 'bg-emerald-100 text-emerald-800',
+    description: 'Final Step 3 asset serial assignment & deduction schedule sign-off.',
+  },
+  {
+    entraOid: '66666666-6666-4666-8666-666666666601',
+    name: 'Lombe Kasonde',
+    role: 'FINANCE_MANAGER',
+    title: 'Group Finance Manager',
+    institution: 'Educore Central Admin',
+    badgeColor: 'bg-teal-100 text-teal-800',
+    description: 'Final sign-off for Advances, Bank Changes, Stores & Event Completion.',
+  },
+  {
+    entraOid: '77777777-7777-4777-8777-777777777701',
+    name: 'Dambo Simwanza',
+    role: 'LOGISTICS_MANAGER',
+    title: 'Logistics & Procurement Coordinator',
+    institution: 'Educore Central Admin',
+    badgeColor: 'bg-indigo-100 text-indigo-800',
+    description: 'Reviews Travel Requests & inspects Stock Returns.',
+  },
+  {
+    entraOid: '99999999-9999-4999-8999-999999999901',
+    name: 'Mthunzi Musumadi',
+    role: 'SUPER_ADMIN',
+    title: 'Systems Architect',
+    institution: 'Educore Central Admin',
+    badgeColor: 'bg-rose-100 text-rose-800',
+    description: 'Global oversight and override capability across all steps.',
+  },
+];
+
 export const LoginView: React.FC = () => {
-  const {
-    setActiveEntraOid,
-    loginWithMicrosoft,
-    authConfig,
-    error: authError,
-    currentUser,
-  } = useAppContext();
-
-  const [dbUsers, setDbUsers] = useState<DbDirectoryUser[]>([]);
-  const [isLoadingDbUsers, setIsLoadingDbUsers] = useState<boolean>(true);
-  const [showSandbox, setShowSandbox] = useState(false);
-  const [selectedOid, setSelectedOid] = useState<string>('');
-  const [isSubmitting, setIsSubmitting] = useState(false);
-
-  // Load real users directly from PostgreSQL
-  React.useEffect(() => {
-    let isMounted = true;
-    fetch('/api/users')
-      .then((res) => (res.ok ? res.json() : []))
-      .then((data: DbDirectoryUser[]) => {
-        if (!isMounted) return;
-        setDbUsers(data);
-        if (data.length > 0) {
-          setSelectedOid(data[0].entra_oid);
-        }
-      })
-      .catch((err) => {
-        console.error('Failed to load database users for sandbox:', err);
-      })
-      .finally(() => {
-        if (isMounted) setIsLoadingDbUsers(false);
-      });
-
-    return () => {
-      isMounted = false;
-    };
-  }, []);
-
-  const handleMicrosoftLogin = () => {
-    setIsSubmitting(true);
-    loginWithMicrosoft();
-  };
-
-  const handleSandboxLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedOid) return;
-    setIsSubmitting(true);
-    try {
-      setActiveEntraOid(selectedOid);
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
+  const { setActiveEntraOid } = useAppContext();
+  const [customOid, setCustomOid] = useState('');
 
   return (
-    <div className="min-h-screen bg-slate-100 flex flex-col items-center justify-center p-4 sm:p-6 text-slate-900">
-      <main className="w-full max-w-md">
-        {/* Sleek Corporate Auth Card */}
-        <div className="bg-white border border-slate-200 shadow-sm p-8 sm:p-10">
-          {/* Brand Identity */}
-          <div className="flex items-center gap-3.5 mb-8">
-            <div className="w-11 h-11 bg-slate-900 flex items-center justify-center text-orange-500 font-black text-2xl tracking-wider shrink-0">
-              E
-            </div>
-            <div className="min-w-0">
-              <div className="font-black text-sm text-slate-900 tracking-tight leading-tight">
-                EDUCORE <span className="text-slate-600 font-semibold">PROVISION</span>
-              </div>
-            </div>
+    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col justify-center py-12 px-6">
+      <div className="max-w-5xl mx-auto w-full space-y-8">
+        {/* Header */}
+        <div className="space-y-2 text-center">
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-400 text-xs font-semibold">
+            <ShieldCheck className="w-4 h-4" />
+            Microsoft Entra ID · PostgreSQL 18 RLS Session Simulator
           </div>
-
-          {/* Heading */}
-          <div className="mb-8">
-            <h1 className="text-xl font-bold text-slate-900 tracking-tight">
-              Sign in to your account
-            </h1>
-            <p className="text-xs text-slate-500 mt-1.5 leading-relaxed">
-              Use your organizational Microsoft 365 identity to access equipment requests and approvals.
-            </p>
-          </div>
-
-          {/* Authentication Error Banner */}
-          {authError && (
-            <div
-              role="alert"
-              className="mb-6 p-3 bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-start justify-between gap-3"
-            >
-              <div className="flex items-start gap-2.5">
-                <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" aria-hidden="true" />
-                <div className="leading-relaxed text-[11px]">
-                  <span className="font-semibold block text-rose-900 mb-0.5">Authentication error</span>
-                  {authError}
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  if (authError) {
-                    setActiveEntraOid(null);
-                  }
-                }}
-                className="text-rose-500 hover:text-rose-800 text-xs font-bold px-1.5 py-0.5 cursor-pointer focus-visible:outline-2 focus-visible:outline-rose-600"
-                aria-label="Dismiss error notification"
-              >
-                ✕
-              </button>
-            </div>
-          )}
-
-          {/* Primary Action: Official Microsoft Entra ID SSO Button */}
-          <button
-            type="button"
-            disabled={isSubmitting}
-            onClick={handleMicrosoftLogin}
-            className="w-full h-11 px-4 bg-slate-900 hover:bg-slate-800 active:bg-slate-950 text-white font-medium text-xs flex items-center justify-center gap-3 transition-colors cursor-pointer border border-transparent shadow-xs disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-slate-900 focus-visible:outline-offset-2"
-          >
-            <svg className="w-4 h-4 shrink-0" viewBox="0 0 21 21" aria-hidden="true">
-              <rect x="1" y="1" width="9" height="9" fill="#f25022" />
-              <rect x="11" y="1" width="9" height="9" fill="#7fba00" />
-              <rect x="1" y="11" width="9" height="9" fill="#00a4ef" />
-              <rect x="11" y="11" width="9" height="9" fill="#ffb900" />
-            </svg>
-            <span className="tracking-wide">
-              {isSubmitting ? 'Redirecting to Microsoft…' : 'Sign in with Microsoft 365'}
-            </span>
-          </button>
-
-          {/* Development / Sandbox Sign-In Fallback */}
-          {(!currentUser) && (
-            <div className="mt-6 pt-6 border-t border-slate-200">
-              <form onSubmit={handleSandboxLogin} className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <label
-                    htmlFor="sandbox-account-select"
-                    className="block text-[11px] font-semibold text-slate-600 uppercase tracking-wider"
-                  >
-                    Sandbox profile
-                  </label>
-                  <span className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 font-medium">
-                      Dev mode
-                    </span>
-                </div>
-
-                <div className="flex gap-2">
-                  <select
-                    id="sandbox-account-select"
-                    value={selectedOid}
-                    onChange={(e) => setSelectedOid(e.target.value)}
-                    disabled={isLoadingDbUsers || dbUsers.length === 0}
-                    className="flex-1 min-w-0 text-xs bg-slate-50 border border-slate-300 px-3 py-2 text-slate-800 focus-visible:outline-2 focus-visible:outline-slate-900 disabled:opacity-50"
-                  >
-                    {isLoadingDbUsers ? (
-                      <option value="">Loading users from database...</option>
-                    ) : dbUsers.length === 0 ? (
-                      <option value="">No users found in database</option>
-                    ) : (
-                      dbUsers.map((u) => (
-                        <option key={u.id} value={u.entra_oid}>
-                          {u.full_name} — {u.role.replace(/_/g, ' ')} ({u.institution_name})
-                        </option>
-                      ))
-                    )}
-                  </select>
-
-                  <button
-                    type="submit"
-                    disabled={isSubmitting || !selectedOid || isLoadingDbUsers}
-                    className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer border border-slate-300 disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-slate-900"
-                  >
-                    {isSubmitting ? 'Signing in…' : 'Sign in'}
-                  </button>
-                </div>
-                
-                <p className="text-[10px] text-slate-500 text-center">
-                  Select a test user above. Their Entra OID will be used to authenticate.
-                </p>
-              </form>
-            </div>
-          )}
-
-          {/* Quiet toggle for developers when live Azure is configured */}
-          {currentUser && (
-            <div className="mt-6 pt-5 border-t border-slate-100 text-center">
-              <button
-                type="button"
-                onClick={() => setShowSandbox(true)}
-                className="text-[11px] text-slate-400 hover:text-slate-600 transition-colors cursor-pointer focus-visible:outline-2 focus-visible:outline-slate-900"
-              >
-                Use sandbox test profile
-              </button>
-            </div>
-          )}
-
-          {/* Security Notice */}
-          <div className="mt-8 pt-6 border-t border-slate-100 flex items-center text-center justify-center gap-2 text-xs text-slate-400">
-            <span className="text-[11px]">Educore Services provides leading education <br/>
-            through the following network of schools - Frontier, Sentinel, Trident and the Educore Academy</span>
-          </div>
+          <h1 className="text-3xl font-black tracking-tight text-white">
+            Educore Provision Workflow Engine
+          </h1>
+          <p className="text-sm text-slate-400 max-w-2xl mx-auto">
+            Select an authenticated directory persona below to bind <code className="text-blue-400">request.jwt.claim.sub</code> and test role-based routing across IT, HR, Finance, and Logistics.
+          </p>
         </div>
 
-        {/* Corporate Footer */}
-        <footer className="mt-6 text-center text-[11px] text-slate-500 space-y-1">
-          <p className="font-semibold text-slate-600">Educore Services</p>
-          <p className="text-slate-400">Solwezi, North-Western Province, Zambia</p>
-        </footer>
-      </main>
+        {/* Persona Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {DEMO_PERSONAS.map((persona) => (
+            <button
+              key={persona.entraOid}
+              type="button"
+              onClick={() => setActiveEntraOid(persona.entraOid)}
+              className="text-left p-5 rounded-2xl bg-slate-900/90 border border-slate-800 hover:border-blue-500 hover:bg-slate-900 transition group flex flex-col justify-between space-y-4"
+            >
+              <div className="space-y-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span
+                    className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase ${persona.badgeColor}`}
+                  >
+                    {persona.role.replace(/_/g, ' ')}
+                  </span>
+                  <ArrowRight className="w-4 h-4 text-slate-500 group-hover:text-blue-400 group-hover:translate-x-0.5 transition" />
+                </div>
+
+                <div>
+                  <h3 className="text-sm font-bold text-white flex items-center gap-1.5">
+                    <User className="w-3.5 h-3.5 text-slate-400" />
+                    {persona.name}
+                  </h3>
+                  <p className="text-xs text-slate-400 mt-0.5">{persona.title}</p>
+                </div>
+
+                <div className="flex items-center gap-1.5 text-[11px] text-slate-400">
+                  <Building2 className="w-3.5 h-3.5 text-slate-500" />
+                  {persona.institution}
+                </div>
+              </div>
+
+              <p className="text-[11px] text-slate-400 border-t border-slate-800/80 pt-3">
+                {persona.description}
+              </p>
+            </button>
+          ))}
+        </div>
+
+        {/* Custom Entra OID Input */}
+        <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-4 max-w-xl mx-auto flex flex-col sm:flex-row items-center gap-3">
+          <div className="flex items-center gap-2 text-xs text-slate-400 shrink-0">
+            <KeyRound className="w-4 h-4 text-blue-400" />
+            <span>Custom Entra OID:</span>
+          </div>
+          <input
+            type="text"
+            value={customOid}
+            onChange={(e) => setCustomOid(e.target.value)}
+            placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+            className="flex-1 w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs font-mono text-white"
+          />
+          <button
+            type="button"
+            disabled={!customOid.trim()}
+            onClick={() => setActiveEntraOid(customOid.trim())}
+            className="px-4 py-1.5 rounded-lg bg-blue-600 text-xs font-bold text-white hover:bg-blue-700 disabled:opacity-40 shrink-0"
+          >
+            Bind Session
+          </button>
+        </div>
+      </div>
     </div>
   );
 };
+
+export default LoginView;

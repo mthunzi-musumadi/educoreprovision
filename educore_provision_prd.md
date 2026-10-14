@@ -1,13 +1,13 @@
-# Product Requirements Document (PRD) & Role Flow Architecture
+# Product Requirements Document (PRD) & Enterprise Workflow Architecture
 
 ## Project: Educore Provision
 
-- **Application Name:**  Educore Provision (ICT Equipment Purchase Scheme Portal)
-- **Document Version:**  3.0.0
-- **Target Platform:**  Responsive Web Application (Optimized for desktop-first administrative tasks)
-- **Authentication Provider:**  Microsoft Entra ID (OIDC / OAuth 2.0 with PKCE & App Roles)
-- **Target Database:**  PostgreSQL 18
-- **Target Organization:**  Educore Services (Trident College, Sentinel Kabitaka, Central Administration, etc.)
+- **Application Name:** Educore Provision (Enterprise Multi-Department Workflow & Provisioning Engine)
+- **Document Version:** 4.0.0
+- **Target Platform:** Responsive Web Application (Desktop-first administrative & operational portal)
+- **Authentication Provider:** Microsoft Entra ID (OIDC / OAuth 2.0 with PKCE, App Roles & PostgreSQL RLS Session Binding)
+- **Target Database:** PostgreSQL 18
+- **Target Organization:** Educore Services Zambia (Trident College, Sentinel Kabitaka, Frontier, Educore Academy, Central Administration)
 
 ---
 
@@ -15,29 +15,51 @@
 
 #### 1.1 Problem Statement
 
-The existing *Application ICT Purchase Scheme* workflow relies on physical paper circulation across geographically separated Educore campuses:
+Across Educore Services' geographically distributed schools and central offices, **14 critical operational workflows** spanning **IT**, **Human Resources**, **Finance & Stores**, and **Logistics** previously relied on physical Word/PDF forms (`Application Forms - Provision`):
 
-- Manual routing between teachers, school General Managers / Head Teachers, Central HR, and Central IT takes 3 to 6 weeks.
-- Paper forms are frequently lost or delayed on desks, leaving applicants uninformed and HR without deduction records.
-- Out-of-band checks (such as SACCO loan commitments, salary advance thresholds, or probation constraints) occur late in the cycle, creating administrative bottlenecks.
-- The organization lacks an immutable, timestamped audit trail of policy agreements and payroll deduction mandates.
+- **Cross-Campus Bottlenecks:** Routing physical paper between school staff, Line Managers, School Heads/GMs, and Central Administration (HR, IT, Finance, Logistics) takes 2 to 6 weeks per request.
+- **Zero Visibility & Lost Paperwork:** Staff cannot see whose desk their form is sitting on; Finance and HR lack real-time visibility into pending advances, bank changes, stock requisitions, or equipment commitments.
+- **Inconsistent Compliance:** Out-of-band vetting (probation checks, affordability/debt-ratio verification, stores inspection, policy sign-offs) occurs inconsistently and lacks an immutable digital audit trail.
+- **Schema Rigidity in Legacy Digitization (v3.0):** The initial prototype hardcoded single-purpose ICT laptop purchase columns (`equipment_tier_id`, `gm_reviewer_id`, `hr_reviewer_id`, `it_reviewer_id`) directly onto the root `applications` table, preventing horizontal expansion across HR, Finance, and Logistics workflows.
 
-#### 1.2 System Objectives
+#### 1.2 System Objectives (v4.0 Architecture)
 
-- **Process Acceleration:**  Cut the entire approval lifecycle from weeks to under 48 hours.
-- **Strict Context Scoping:**  Ensure school leaders (GMs / Head Teachers) only see and act on applications originating from their specific institution, while Central HR and Central IT retain global oversight across all Educore units.
-- **Per-Request Legal Enforceability:**  Enforce explicit, immutable legal acceptance on every individual request submission before Part 1 can be completed.
-- **Single Source of Truth:**  Provide an auto-updating Master Sheet with direct export capabilities formatted for Educore payroll deduction batch processing.
+- **Unified 14-Form Digitization:** Consolidate all 14 organizational forms across IT, HR, Finance, and Logistics into a single polymorphic workflow engine without requiring DDL table migrations when new forms are introduced.
+- **Dynamic Multi-Stage Routing:** Route each form automatically through its specific chain of command (`workflow_pipeline`) based on `form_definitions` metadata.
+- **Database-Enforced Multi-Tenancy (RLS):** Enforce strict Row-Level Security inside PostgreSQL 18 via transaction-scoped session claims (`request.jwt.claim.sub`). School-scoped leaders (`HEAD_TEACHER`, `LINE_MANAGER`) can only view and sign off on records from their assigned institution, while Central roles (`HR_MANAGER`, `IT_MANAGER`, `FINANCE_MANAGER`, `LOGISTICS_MANAGER`) operate organization-wide.
+- **Conditional Per-Request Legal Enforceability:** Dynamically enforce verbatim policy snapshots (`legal_text_snapshot`) and explicit digital acceptance on forms carrying financial/payroll or benefit obligations (`requires_policy = true`).
+- **Concurrency-Safe Auditability:** Guarantee race-condition-free reference numbering (`EDC-<PREFIX>-YYYY-XXXX`), row-level locking (`FOR UPDATE`) during approval state transitions, and an immutable audit log (`approval_audit_logs`).
 
 ---
 
-### 2. Identity Architecture: Microsoft Entra ID Integration
+### 2. Catalog of Digitized Organizational Workflows (All 14 Forms)
 
-Educore Provision authenticates all users through Educore Services' Microsoft Entra ID tenant. No local passwords or credentials are stored within the application.
+Every form is defined as a declarative catalog entry in `public.form_definitions` with its own reference prefix, department, policy gate requirement, and ordered approval pipeline:
 
-#### 2.1 Token Claims Mapping
+| Department | Form Code | Reference Prefix | Document Title | Policy Gate | Ordered Approval Pipeline (`step_order`) |
+| :--- | :--- | :--- | :--- | :---: | :--- |
+| **IT** | `ICT_PURCHASE` | `EDC-ICT` | Application ICT Purchase Scheme | Yes | 1. `HEAD_TEACHER` (School)<br>2. `HR_MANAGER` (Central)<br>3. `IT_MANAGER` (Central) |
+| **Logistics** | `TRAVEL_REQUEST` | `EDC-TRV` | Travel Request Form | No | 1. `HEAD_TEACHER` (School)<br>2. `LOGISTICS_MANAGER` (Central) |
+| **HR** | `SALARY_ADVANCE` | `EDC-ADV` | Application for Advance | Yes | 1. `HEAD_TEACHER` (School)<br>2. `HR_MANAGER` (Central)<br>3. `FINANCE_MANAGER` (Central) |
+| **HR** | `PROF_DEV` | `EDC-PDV` | Application for Professional Development | Yes | 1. `HEAD_TEACHER` (School)<br>2. `HR_MANAGER` (Central) |
+| **HR** | `BANK_CHANGE` | `EDC-BNK` | Change of Bank Details | No | 1. `HR_MANAGER` (Central)<br>2. `FINANCE_MANAGER` (Central) |
+| **HR** | `CONTRACT_RENEWAL` | `EDC-CNT` | Contract Renewal Form for HR | No | 1. `HEAD_TEACHER` (School)<br>2. `HR_MANAGER` (Central) |
+| **HR** | `CHILD_ADMISSION` | `EDC-CHD` | Educore Staff Child Admission Authorisation | Yes | 1. `HEAD_TEACHER` (School)<br>2. `HR_MANAGER` (Central) |
+| **HR** | `EXCULPATORY` | `EDC-EXC` | Exculpatory Form | No | 1. `LINE_MANAGER` (School)<br>2. `HR_MANAGER` (Central) |
+| **HR** | `GRATUITY_ADVANCE` | `EDC-GRT` | Gratuity Advance Application Form - Annual | Yes | 1. `HR_MANAGER` (Central)<br>2. `FINANCE_MANAGER` (Central) |
+| **HR** | `JOB_DESCRIPTION` | `EDC-JDS` | Job Description Sign-off | No | 1. `LINE_MANAGER` (School)<br>2. `HR_MANAGER` (Central) |
+| **HR** | `MANPOWER_REQ` | `EDC-MPR` | Manpower Requisition Form | No | 1. `HEAD_TEACHER` (School)<br>2. `HR_MANAGER` (Central) |
+| **Finance** | `EVENT_COMPLETION` | `EDC-EVC` | Event Completion Form | No | 1. `HEAD_TEACHER` (School)<br>2. `FINANCE_MANAGER` (Central) |
+| **Finance** | `STOCK_RETURN` | `EDC-STR` | Stock Return Form | No | 1. `LOGISTICS_MANAGER` (Central)<br>2. `FINANCE_MANAGER` (Central) |
+| **Finance** | `STORES_REQ` | `EDC-SRQ` | Stores Requisition Form | No | 1. `HEAD_TEACHER` (School)<br>2. `FINANCE_MANAGER` (Central) |
 
-Upon authentication, the JWT issued by Entra ID contains critical identity and tenancy claims ingested by the application middleware:
+---
+
+### 3. Identity & RBAC Architecture: Microsoft Entra ID
+
+Educore Provision authenticates users via Microsoft Entra ID. The Node/Express API layer extracts the authenticated user's Entra Object ID (`entra_oid`) and binds it to the PostgreSQL transaction using `SELECT set_config('request.jwt.claim.sub', $1, true)` inside `withRlsContext()`.
+
+#### 3.1 Token Claims Mapping
 
 ```json
 {
@@ -52,462 +74,135 @@ Upon authentication, the JWT issued by Entra ID contains critical identity and t
 }
 ```
 
-#### 2.2 App Roles Configuration in Entra ID
+#### 3.2 Role Matrix (`public.user_role`)
 
-- `Provision.Applicant`: Default role assigned to all Educore directory accounts.
-- `Provision.HeadTeacher`: Assigned to school General Managers and Head Teachers.
-- `Provision.HRManager`: Assigned to Central Human Resources personnel.
-- `Provision.ITManager`: Assigned to Central ICT administrators and procurement staff.
-- `Provision.SuperAdmin`: Assigned to System Engineers for tenant and policy setup.
-
----
-
-### 3. Detailed User Flows by Role
-
----
-
-#### 3.1 Role: Applicant (Teacher / Operational Staff)
-
-##### Context & Identity
-
-- **Target Audience:**  Any active Educore employee seeking a Level 1 or Level 2 laptop through payroll deductions.
-- **Security Scope:**  Can only view, create, and track their **own** applications (`applicant_id = auth.uid()`).
-
-##### What They See (UI Views)
-
-1. **Applicant Home Dashboard (**  **`/my-requests`** **):**
-
-   - High-level summary cards: "Active Request", "Past Requests", "Current Policy Version".
-   - Data table of own submissions showing: Reference ID (`EDC-ICT-2026-XXXX`), Submission Date, Requested Tier, Current Status Badge, and Last Event.
-   - Prominent action button: `+ New Equipment Request` (disabled if an active request is already in-flight).
-2. **Request Submission Stepper (**  **`/requests/new`** **):**
-
-   - **Screen 0 (Mandatory Legal Gate):**  Distinct high-contrast card rendering the verbatim policy terms with their authenticated full name pre-filled.
-   - **Screen 1 (Part 1 Form):**  Hardware selection radio cards (Level 1 vs. Level 2 with specifications), repayment schedule options (1-2 Months, 12 Months, 24 Months), and read-only identity metadata (Name, Employee ID, Institution).
-   - **Screen 2 (Confirmation & Identity Sign-off):**  Summary card with a digital signing trigger.
-3. **Application Detail & Tracking View (**  **`/requests/:id`** **):**
-
-   - Linear 4-stage visual stepper showing progress: Applicant $\rightarrow$ Head Teacher $\rightarrow$ HR Manager $\rightarrow$ ICT Manager.
-   - Read-only copy of their submitted Part 1.
-   - Activity timeline showing non-sensitive milestone timestamps (e.g., "Endorsed by Head Teacher", "Under Review by HR").
-   - Download button for the sealed PDF once status reaches `APPROVED`.
-
-##### What They Have Access To
-
-- Submit a new request after agreeing to per-request legal terms.
-- Cancel / withdraw their application while it is still in `PENDING_GM_REVIEW`.
-- View their historical requests and download finalized approval documents.
-
-##### What They Do NOT Have Access To (Strict Restrictions)
-
-- **CANNOT** view any request submitted by another colleague or staff member.
-- **CANNOT** edit Part 1 once submitted (must withdraw and re-apply if changes are required).
-- **CANNOT** view internal review comments (e.g., HR debt ratio checks or credit evaluations).
-- **CANNOT** view or access the Master Sheet, administrative queues, or export tools.
-- **CANNOT** bypass the Legal Gate under any circumstance.
+| Database Role Enum | Entra App Role | Tenancy Scope | Primary Responsibility |
+| :--- | :--- | :--- | :--- |
+| `APPLICANT` | `Provision.Applicant` | Own Records (`applicant_id`) | Submit forms, track live pipeline progress, withdraw in-flight requests. |
+| `LINE_MANAGER` | `Provision.LineManager` | Assigned School (`institution_id`) | Step 1 review for `EXCULPATORY` and `JOB_DESCRIPTION` workflows within their school. |
+| `HEAD_TEACHER` | `Provision.HeadTeacher` | Assigned School (`institution_id`) | Step 1 institutional endorsement across IT, HR, Finance, and Logistics requests originating at their school. |
+| `HR_MANAGER` | `Provision.HRManager` | Global (All Schools) | Central HR vetting, employment/affordability checklist sign-off, contract/benefit approvals. |
+| `IT_MANAGER` | `Provision.ITManager` | Global (All Schools) | Hardware allocation, serial number recording, and final deduction schedule sign-off for `ICT_PURCHASE`. |
+| `FINANCE_MANAGER` | `Provision.FinanceManager` | Global (All Schools) | Payroll updates (`BANK_CHANGE`), advance disbursements (`SALARY_ADVANCE`, `GRATUITY_ADVANCE`), and stores/budget reconciliation (`STORES_REQ`, `STOCK_RETURN`, `EVENT_COMPLETION`). |
+| `LOGISTICS_MANAGER` | `Provision.LogisticsManager` | Global (All Schools) | Fleet/travel coordination (`TRAVEL_REQUEST`) and physical stores return inspection (`STOCK_RETURN`). |
+| `SUPER_ADMIN` | `Provision.SuperAdmin` | Global (All Schools) | System administration, form catalog maintenance, policy version publishing, and emergency override. |
 
 ---
 
-#### 3.2 Role: General Manager / Head Teacher (School Leadership)
+### 4. Unified User Experience & Role Flows
 
-##### Context & Identity
+Instead of maintaining fragmented, department-specific UI silos, the frontend uses three polymorphic core views driven by metadata from `/api/bootstrap` and `/api/applications`.
 
-- **Target Audience:**  Heads of School and General Managers (e.g., Head of Trident College, GM of Sentinel Kabitaka).
-- **Security Scope:**  Strictly scoped to the institution matching their Entra ID directory claim (`institution_id = auth.institution_id()`).
+#### 4.1 My Applications Workspace (`ApplicantDashboard.tsx` & `NewRequestStepper.tsx`)
 
-##### What They See (UI Views)
+Available to **all** authenticated staff (including managers submitting personal requests):
 
-1. **School Review Dashboard (**  **`/school-triage`** **):**
+1. **Multi-Department KPI & Filter Strip:** Displays total submissions, in-review count, drafts/revisions required, and approved requests. Filterable by Department (`ALL`, `IT`, `HR`, `FINANCE`, `LOGISTICS`), Lifecycle Status, and Reference/Title search.
+2. **3-Step Schema-Driven Submission Wizard (`NewRequestStepper.tsx`):**
+   - **Step 1 (Department & Form Selection):** Staff filter by department and pick from the 14 form cards. Each card previews the exact multi-stage approval chain (`workflow_pipeline`) before selection.
+   - **Step 2 (Polymorphic Payload Form):** Dynamically renders the required inputs for the chosen `FormCode`:
+     - *ICT Purchase:* Interactive Level 1 / Level 2 hardware cards, repayment plan selector, and live monthly ZMW payroll deduction calculator.
+     - *Stores Requisition & Stock Return:* Dynamic multi-row line-item table (`item_code`, `description`, `qty`, `condition`/`unit`) with add/remove row controls.
+     - *HR, Finance & Logistics Forms:* Validated date pickers, currency inputs, institution selectors, and structured text areas matching strict TypeScript `FormPayloadMap[K]` contracts.
+   - **Step 3 (Conditional Policy Gate & Digital Signature):** Displays the automated routing pipeline. If `requires_policy = true`, renders the active `policy_versions.legal_text` and mandates explicit checkbox consent before unlocking the digital signature input (`Save as Draft` or `Sign & Submit Application`).
 
-   - Institutional banner indicating their assigned campus (e.g., "Trident College — Leadership Portal").
-   - Action Queue: Pending applications from staff at their school requiring endorsement.
-   - Campus Archive Tab: Searchable log of past applications endorsed or rejected within their school.
-2. **Application Endorsement View (**  **`/school-triage/:id`** **):**
+#### 4.2 Unified Sign-off Queue & Master Ledger (`MasterSheetView.tsx`)
 
-   - **Section 1 (Applicant Data & Legal Verification):**  Read-only view of the applicant's signed declaration, hardware tier, and repayment period.
-   - **Section 2 (Part 2 Endorsement Container):**
+Available to all reviewer roles (`LINE_MANAGER`, `HEAD_TEACHER`, `HR_MANAGER`, `IT_MANAGER`, `FINANCE_MANAGER`, `LOGISTICS_MANAGER`, `SUPER_ADMIN`):
 
-     - Textarea: *Endorsement Comments / Operational Justification* (optional for approvals, mandatory for rejections).
-     - Action Buttons:
+1. **Dual Operating Modes:**
+   - **Sign-off Queue Mode (`awaitingMyRoleOnly = true`):** Filters the queue strictly to `status = 'IN_REVIEW'` where `current_approver_role` matches the logged-in reviewer's role (and `institution_id` matches for school-scoped roles).
+   - **Master Ledger Mode (`awaitingMyRoleOnly = false`):** Displays all records visible under the user's PostgreSQL RLS policy across all 14 forms.
+2. **Multi-Dimensional Filtering & Export:** Filterable simultaneously by Department, specific Form Type (all 14 forms), Institution/School, Lifecycle Status, and text search. Includes one-click **CSV Export** for payroll, inventory, and audit batch processing.
 
-       - `Endorse & Submit to HR` (Primary, Emerald).
-       - `Request Revision` (Amber — returns request to applicant with notes).
-       - `Reject Request` (Crimson — halts application).
-   - **Audit Sidebar:**  Timeline showing when the teacher submitted the request and client session details.
+#### 4.3 Polymorphic Inspector & Reviewer Console (`ApplicationDetailDrawer.tsx`)
 
-##### What They Have Access To
+Clicking any row in either `ApplicantDashboard` or `MasterSheetView` opens the unified slide-over drawer:
 
-- Endorse Part 2 to advance the ticket to Central HR.
-- Reject applications with mandatory feedback.
-- Request revisions if the staff member selected the wrong repayment plan.
-- View all equipment applications originating strictly within their institution.
-
-##### What They Do NOT Have Access To (Strict Restrictions)
-
-- **CANNOT** view, search, or access applications from other Educore schools (e.g., Trident College leadership cannot see Sentinel Kabitaka records).
-- **CANNOT** access Part 3 (HR clearance) or Part 4 (IT financial schedule & asset assignment).
-- **CANNOT** access the Central Master Sheet or organization-wide payroll exports.
-- **CANNOT** edit the applicant's Part 1 tier or repayment selections directly.
+1. **Live Pipeline Progress (`StepperProgress.tsx`):** Renders the exact number of approval nodes for that specific form (`Applicant Submission` -> `Step 1` -> `Step 2` -> `Step N`) with real-time status icons and reviewer names.
+2. **Polymorphic Payload Inspector:** Automatically formats the JSONB `payload` as a hardware specification card (`ICT_PURCHASE`), a structured line-item table (`STORES_REQ`, `STOCK_RETURN`), or a labeled key-value grid (all other forms).
+3. **Immutable Legal & Sign-off Dossier:** Displays the verbatim `legal_text_snapshot` (if applicable) alongside every completed step in `application_approvals`, including timestamps, reviewer comments, HR checklists, and IT serial numbers.
+4. **Role-Aware Active Reviewer Console:** Unlocks **only** if `currentUser.role === application.current_approver_role` (or `SUPER_ADMIN`):
+   - **Standard Controls (All Reviewers):** Reviewer comments, digital signature input, and three state-transition triggers: `Approve & Advance`, `Request Revision`, and `Reject`.
+   - **HR Manager Extension:** Automatically embeds the interactive `hrChecklist` (`employment_confirmed`, `affordability_verified`, `no_active_disciplinary`) whenever `required_role === 'HR_MANAGER'`.
+   - **IT Manager Extension:** Automatically embeds asset provisioning inputs (`asset_serial_number`, `deducted_monthly_amount_zmw`, `deduction_start_date`, `deduction_end_date`) stored in `step_metadata` whenever `required_role === 'IT_MANAGER'` on `ICT_PURCHASE`.
 
 ---
 
-#### 3.3 Role: Central HR Manager (People & Payroll Compliance)
+### 5. Universal Workflow State Machine
 
-##### Context & Identity
-
-- **Target Audience:**  Central HR operations team based at Educore Central Administration.
-- **Security Scope:**  Organization-wide global visibility across all Educore institutions.
-
-##### What They See (UI Views)
-
-1. **Central HR Triage Queue (**  **`/hr/queue`** **):**
-
-   - Global table of all requests across all campuses sitting at `PENDING_HR_REVIEW`.
-   - Columns: Submission Date, School Badge, Staff Name, Staff ID, Tier Requested, Repayment Plan, GM Endorser Name, Age in Queue.
-   - Institution filter tabs (All, Trident College, Sentinel Kabitaka, Central Admin).
-2. **Application Clearance Screen (**  **`/hr/queue/:id`** **):**
-
-   - **Applicant Standing Card:**  Staff ID, current employment status, contract expiration date.
-   - **Part 1 & Part 2 Cards:**  Read-only view of applicant choices and GM endorsement notes.
-   - **Part 3 Clearance Container:**
-
-     - Vetting Checklist: Confirmed 0 active salary advance conflicts; confirmed probation cleared; debt ratio within Educore 33% threshold.
-     - Textarea: *HR Clearance Notes* (mandatory if rejected).
-     - Action Buttons:
-
-       - `Approve Clearance & Route to IT` (Primary).
-       - `Reject Application` (Crimson).
-3. **Master Sheet (HR / Payroll View) (**  **`/master-sheet`** **):**
-
-   - Organization-wide ledger of all approved and in-progress applications.
-   - "Export Payroll CSV" button to download deduction batches for the upcoming pay cycle.
-
-##### What They Have Access To
-
-- View all requests across every Educore school.
-- Clear or reject Part 3 based on payroll debt verification.
-- Access the Master Sheet and generate payroll export files.
-- View internal audit logs, including reviewer timestamps and IP snapshots.
-
-##### What They Do NOT Have Access To (Strict Restrictions)
-
-- **CANNOT** allocate hardware serial numbers or enter laptop asset tags in Part 4.
-- **CANNOT** enter or alter the `deducted_monthly_amount` or date ranges in Part 4 (strictly reserved for ICT).
-- **CANNOT** sign off Part 4 or close tickets.
-- **CANNOT** alter the applicant's initial tier selection (must reject or request revision).
-
----
-
-#### 3.4 Role: Central ICT Manager (Hardware & Scheme Ownership)
-
-##### Context & Identity
-
-- **Target Audience:**  Central IT Infrastructure Manager and IT Procurement Officers.
-- **Security Scope:**  Organization-wide global visibility across all Educore institutions.
-
-##### What They See (UI Views)
-
-1. **IT Provisioning Queue (**  **`/it/provisioning`** **):**
-
-   - Queue of applications in status `PENDING_IT_SIGNOFF`.
-   - Badges highlighting priority, hardware tier (`Level 1` vs. `Level 2`), and destination campus.
-2. **Device Assignment & Financial Sign-off View (**  **`/it/provisioning/:id`** **):**
-
-   - **Audit Card:**  Complete read-only dossier of Parts 1, 2, and 3 (Terms accepted, GM endorsed, HR cleared).
-   - **Part 4 Sign-off Container:**
-
-     - Input: *Asset Serial Number / Service Tag* (e.g., `DELL-LAT-5540-0891`).
-     - Input: *Deducted Monthly Amount (ZMW)*  (numeric input with auto-formatting).
-     - Date Pickers: *Deduction Start Month (* *`from`* *)*  and *Deduction End Month (* *`to`* *)* .
-     - Textarea: *ICT Handover & Warranty Notes*.
-     - Action Buttons:
-
-       - `Finalize, Sign & Close Request` (Generates sealed PDF, updates state to `APPROVED`).
-       - `Reject (Hardware Unavailable)` (Crimson).
-3. **Master Sheet (IT / Asset Lifecycle View) (**  **`/master-sheet`** **):**
-
-   - Full inventory registry displaying allocated assets, serial numbers, recipient staff, assigned schools, and deduction timelines.
-   - "Export Asset Register CSV" button.
-
-##### What They Have Access To
-
-- View all applications across all institutions.
-- Set hardware serial numbers, monthly deduction amounts, and deduction schedules.
-- Execute the final Part 4 sign-off, sealing the digital document.
-- Access and export the full Master Sheet.
-
-##### What They Do NOT Have Access To (Strict Restrictions)
-
-- **CANNOT** approve applications that have not completed GM endorsement (Part 2) and HR clearance (Part 3).
-- **CANNOT** alter HR compliance records or debt verification statuses.
-- **CANNOT** modify the applicant's Part 1 choices.
-
----
-
-### 4. Application State Machine
+Instead of coupling lifecycle states to specific departments (`PENDING_GM_REVIEW`, `PENDING_IT_SIGNOFF`), the envelope tracks a generic `lifecycle_status` paired with `current_step_order` (`int2`) and `current_approver_role` (`user_role`):
 
 ```text
 [ DRAFT ]
    │
-   │ (Accept Legal Terms + Submit Part 1)
+   │ (Applicant signs & submits; if requires_policy=true, terms_accepted must be true)
+   │ -> Sets status = 'IN_REVIEW'
+   │ -> Sets current_step_order = 1, current_approver_role = pipeline[0].role
    ▼
-[ PENDING_GM_REVIEW ] ─────────(GM Rejection)─────────► [ REJECTED ]
+[ IN_REVIEW (Step k of N) ] ──(Reviewer clicks "Request Revision")──► [ REVISION_REQUIRED ]
+   │                                                                           │
+   ├──(Reviewer clicks "Reject")────────────────────────────────────► [ REJECTED ]
    │
-   │ (GM Endorsed - Part 2)
-   ▼
-[ PENDING_HR_REVIEW ] ─────────(HR Rejection)─────────► [ REJECTED ]
+   ├──(Applicant withdraws while IN_REVIEW / DRAFT / REVISION)──────► [ CLOSED ]
    │
-   │ (HR Approved - Part 3)
-   ▼
-[ PENDING_IT_SIGNOFF ] ────────(IT Rejection)─────────► [ REJECTED ]
+   │ (Reviewer clicks "Approve & Advance" on Step k)
+   ├─► If Step k < N:
+   │     status remains 'IN_REVIEW'
+   │     current_step_order = k + 1
+   │     current_approver_role = pipeline[k].role
    │
-   │ (IT Finalized & Scheduled - Part 4)
-   ▼
-[ APPROVED / ACTIVE_DEDUCTION ]
-   │
-   │ (Deduction Schedule Concluded)
-   ▼
-[ CLOSED ]
+   └─► If Step k == N (Final pipeline step approved):
+         status = 'APPROVED'
+         current_step_order = NULL
+         current_approver_role = NULL
 ```
 
 ---
 
-### 5. PostgreSQL 18 Architecture
+### 6. PostgreSQL 18 Database Architecture
 
-The database schema utilizes modern PostgreSQL 18 features, including native UUIDv7 generation, generated identity columns, and robust declarative Row-Level Security.
+#### 6.1 Core Tables & Responsibilities
 
-```sql
--- Extensions
-CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+1. **`public.institutions`**: Master catalog of Educore schools and business units (`code`, `name`, `location`).
+2. **`public.users`**: Staff directory synchronized with Entra ID (`entra_oid`, `institution_id`, `employee_number`, `role`, `department`, `job_title`).
+3. **`public.form_definitions`**: Declarative registry of all 14 forms (`code`, `ref_prefix`, `department`, `title`, `requires_policy`, `workflow_pipeline` JSONB, `seq_year`, `seq_counter`).
+4. **`public.policy_versions`**: Versioned legal agreements linked optionally to `form_definition_id`.
+5. **`public.equipment_tiers`**: Hardware catalog for the `ICT_PURCHASE` form (`LEVEL_1`, `LEVEL_2`, `price_zmw`, specs).
+6. **`public.applications`**: The generic workflow envelope storing applicant telemetry, lifecycle state (`status`, `current_step_order`, `current_approver_role`), legal snapshot, and the validated `payload` (`jsonb`) indexed via `GIN`.
+7. **`public.application_approvals`**: Normalized 1-to-many approval steps spawned automatically on application insert via `trg_spawn_approval_pipeline`. Stores `step_order`, `required_role`, `institution_scoped`, `status`, `reviewer_id`, `comments`, `checklist_data` (`jsonb`), and `step_metadata` (`jsonb`).
+8. **`public.approval_audit_logs`**: Immutable append-only event log recording every state transition and actor signature.
+9. **`public.purchase_applications` (SQL View)**: Backwards-compatible `security_invoker` view projecting `ICT_PURCHASE` rows and joining `equipment_tiers` and `application_approvals` steps 1–3 into the legacy flat column structure.
 
--- Enum Definitions
-CREATE TYPE user_role AS ENUM (
-    'APPLICANT', 
-    'HEAD_TEACHER', 
-    'HR_MANAGER', 
-    'IT_MANAGER', 
-    'SUPER_ADMIN'
-);
+#### 6.2 Concurrency & Integrity Guarantees
 
-CREATE TYPE application_status AS ENUM (
-    'DRAFT', 
-    'PENDING_GM_REVIEW', 
-    'PENDING_HR_REVIEW', 
-    'PENDING_IT_SIGNOFF', 
-    'REVISION_REQUIRED',
-    'APPROVED', 
-    'REJECTED', 
-    'CLOSED'
-);
-
-CREATE TYPE laptop_tier AS ENUM ('LEVEL_1', 'LEVEL_2');
-
-CREATE TYPE repayment_plan AS ENUM (
-    'ONE_TO_TWO_MONTHS', 
-    'TWELVE_MONTHS', 
-    'TWENTY_FOUR_MONTHS'
-);
-
--- 1. Institutions Table
-CREATE TABLE institutions (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    name VARCHAR(150) NOT NULL UNIQUE,
-    code VARCHAR(50) NOT NULL UNIQUE, -- e.g., 'TRIDENT_COLLEGE', 'SENTINEL_KABITAKA'
-    is_active BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
--- 2. Users Table (Synchronized with Entra ID directory claims)
-CREATE TABLE users (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    entra_oid UUID UNIQUE NOT NULL, -- Entra ID Object ID claim
-    institution_id UUID NOT NULL REFERENCES institutions(id) ON DELETE RESTRICT,
-    employee_number VARCHAR(50) UNIQUE NOT NULL,
-    full_name VARCHAR(150) NOT NULL,
-    email VARCHAR(255) UNIQUE NOT NULL,
-    role user_role NOT NULL DEFAULT 'APPLICANT',
-    is_active BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
--- 3. Policy Legal Versions Table
-CREATE TABLE policy_versions (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    version_tag VARCHAR(50) NOT NULL UNIQUE, -- e.g., 'v1.0-2026'
-    legal_text TEXT NOT NULL,
-    is_active BOOLEAN NOT NULL DEFAULT TRUE,
-    effective_date DATE NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
--- 4. Main Purchase Applications Table
-CREATE TABLE purchase_applications (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    reference_number VARCHAR(50) UNIQUE NOT NULL,
-    applicant_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
-    institution_id UUID NOT NULL REFERENCES institutions(id) ON DELETE RESTRICT,
-    status application_status NOT NULL DEFAULT 'DRAFT',
-
-    -- Per-Request Legal Terms Acceptance
-    policy_version_id UUID NOT NULL REFERENCES policy_versions(id) ON DELETE RESTRICT,
-    legal_text_snapshot TEXT NOT NULL,
-    terms_accepted BOOLEAN NOT NULL DEFAULT FALSE,
-    terms_accepted_at TIMESTAMPTZ,
-    applicant_ip_address INET,
-    applicant_user_agent TEXT,
-
-    -- Part 1: Applicant Choices
-    requested_laptop_tier laptop_tier NOT NULL,
-    repayment_period repayment_plan NOT NULL,
-    applicant_signed_at TIMESTAMPTZ,
-
-    -- Part 2: GM / Head Teacher Endorsement
-    gm_reviewer_id UUID REFERENCES users(id) ON DELETE RESTRICT,
-    gm_comments TEXT,
-    gm_signed_at TIMESTAMPTZ,
-
-    -- Part 3: HR Review & Debt Clearance
-    hr_reviewer_id UUID REFERENCES users(id) ON DELETE RESTRICT,
-    hr_comments TEXT,
-    hr_signed_at TIMESTAMPTZ,
-
-    -- Part 4: ICT Equipment & Payroll Schedule
-    it_reviewer_id UUID REFERENCES users(id) ON DELETE RESTRICT,
-    asset_serial_number VARCHAR(100),
-    deducted_monthly_amount NUMERIC(12, 2),
-    deduction_start_date DATE,
-    deduction_end_date DATE,
-    it_comments TEXT,
-    it_signed_at TIMESTAMPTZ,
-
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-
-    -- Constraints
-    CONSTRAINT chk_terms_completion CHECK (
-        (status = 'DRAFT') OR 
-        (terms_accepted = TRUE AND terms_accepted_at IS NOT NULL AND applicant_signed_at IS NOT NULL)
-    ),
-    CONSTRAINT chk_deduction_window CHECK (
-        deduction_start_date IS NULL OR 
-        deduction_end_date IS NULL OR 
-        deduction_end_date >= deduction_start_date
-    ),
-    CONSTRAINT chk_deducted_amount_positive CHECK (
-        deducted_monthly_amount IS NULL OR deducted_monthly_amount > 0
-    )
-);
-
--- 5. Immutable Audit Trail / Timeline Events
-CREATE TABLE application_timeline_events (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    application_id UUID NOT NULL REFERENCES purchase_applications(id) ON DELETE CASCADE,
-    actor_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
-    action_type VARCHAR(60) NOT NULL,
-    from_status application_status,
-    to_status application_status,
-    comments TEXT,
-    is_internal BOOLEAN NOT NULL DEFAULT FALSE, -- Internal notes hidden from applicants
-    metadata JSONB DEFAULT '{}'::jsonb,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
--- Performance Indexes
-CREATE INDEX idx_apps_institution ON purchase_applications(institution_id);
-CREATE INDEX idx_apps_applicant ON purchase_applications(applicant_id);
-CREATE INDEX idx_apps_status ON purchase_applications(status);
-CREATE INDEX idx_apps_ref_num ON purchase_applications(reference_number);
-CREATE INDEX idx_timeline_app_id ON application_timeline_events(application_id);
-CREATE INDEX idx_timeline_created ON application_timeline_events(created_at ASC);
-
--- Reference Number Sequence Trigger
-CREATE OR REPLACE FUNCTION generate_app_reference_number()
-RETURNS TRIGGER AS $$
-DECLARE
-    year_str TEXT;
-    seq_val INT;
-BEGIN
-    year_str := TO_CHAR(NOW(), 'YYYY');
-    SELECT COUNT(*) + 1 INTO seq_val 
-    FROM purchase_applications 
-    WHERE EXTRACT(YEAR FROM created_at) = EXTRACT(YEAR FROM NOW());
-    
-    NEW.reference_number := 'EDC-ICT-' || year_str || '-' || LPAD(seq_val::TEXT, 4, '0');
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-CREATE TRIGGER trg_set_reference_number
-BEFORE INSERT ON purchase_applications
-FOR EACH ROW
-WHEN (NEW.reference_number IS NULL OR NEW.reference_number = '')
-EXECUTE FUNCTION generate_app_reference_number();
-```
+- **Atomic Reference Numbering (`generate_app_reference_number`):** Uses an atomic `UPDATE public.form_definitions SET seq_counter = ... RETURNING ref_prefix, seq_counter` row lock during `BEFORE INSERT` on `applications`. Prevents duplicate `reference_number` race conditions under simultaneous submissions and auto-resets counters on January 1st (`seq_year`).
+- **Pessimistic Row Locking on Sign-off (`processApprovalStep`):** Executes `SELECT * FROM public.applications WHERE id = $1 FOR UPDATE` and `SELECT * FROM public.application_approvals WHERE application_id = $1 AND step_order = $2 FOR UPDATE` inside a transaction so two managers clicking "Approve" simultaneously cannot double-advance a workflow.
+- **Transactional RLS Context (`withRlsContext`):** Every database call checks out a pooled client, opens a transaction (`BEGIN`), executes `SELECT set_config('request.jwt.claim.sub', $1, true)`, runs the query under PostgreSQL Row-Level Security, and commits (`COMMIT`), guaranteeing zero session leakage across pooled connections.
 
 ---
 
-### 6. Row-Level Security (RLS) Policies
+### 7. Backend API Specification (`server.ts`)
 
-PostgreSQL Row-Level Security ensures data leakage between institutions is prevented directly at the storage engine level.
+All `/api/*` endpoints (except `/api/health`) require a valid UUID in the `x-entra-oid` header (or upstream decoded Bearer token claim).
 
-```sql
-ALTER TABLE purchase_applications ENABLE ROW LEVEL SECURITY;
-ALTER TABLE application_timeline_events ENABLE ROW LEVEL SECURITY;
-
--- Session helper functions extracting claims from authenticated request context
-CREATE OR REPLACE FUNCTION current_auth_user_id() RETURNS UUID AS $$
-    SELECT NULLIF(current_setting('request.jwt.claim.sub', true), '')::UUID;
-$$ LANGUAGE sql STABLE;
-
-CREATE OR REPLACE FUNCTION current_auth_institution_id() RETURNS UUID AS $$
-    SELECT institution_id FROM users WHERE entra_oid = current_auth_user_id();
-$$ LANGUAGE sql STABLE;
-
-CREATE OR REPLACE FUNCTION current_auth_role() RETURNS user_role AS $$
-    SELECT role FROM users WHERE entra_oid = current_auth_user_id();
-$$ LANGUAGE sql STABLE;
-
--- SELECT Policies for purchase_applications
-CREATE POLICY rls_applicant_select ON purchase_applications
-    FOR SELECT USING (applicant_id = (SELECT id FROM users WHERE entra_oid = current_auth_user_id()));
-
-CREATE POLICY rls_head_teacher_select ON purchase_applications
-    FOR SELECT USING (
-        current_auth_role() = 'HEAD_TEACHER' AND
-        institution_id = current_auth_institution_id()
-    );
-
-CREATE POLICY rls_central_staff_select ON purchase_applications
-    FOR SELECT USING (
-        current_auth_role() IN ('HR_MANAGER', 'IT_MANAGER', 'SUPER_ADMIN')
-    );
-
--- INSERT Policy (Only applicants for their assigned institution)
-CREATE POLICY rls_applicant_insert ON purchase_applications
-    FOR INSERT WITH CHECK (
-        applicant_id = (SELECT id FROM users WHERE entra_oid = current_auth_user_id()) AND
-        institution_id = current_auth_institution_id()
-    );
-
--- Timeline Event SELECT Policy (Hides is_internal events from applicants)
-CREATE POLICY rls_timeline_select ON application_timeline_events
-    FOR SELECT USING (
-        EXISTS (
-            SELECT 1 FROM purchase_applications pa
-            WHERE pa.id = application_id
-        ) AND (
-            is_internal = FALSE OR 
-            current_auth_role() IN ('HEAD_TEACHER', 'HR_MANAGER', 'IT_MANAGER', 'SUPER_ADMIN')
-        )
-    );
-```
+| Method & Path | Purpose | Security & Validation |
+| :--- | :--- | :--- |
+| `GET /api/health` | Database connectivity healthcheck. | Public health probe. |
+| `GET /api/bootstrap` | Returns `currentUser`, `institutions`, `equipmentTiers`, `formDefinitions`, and `policies`. | Authenticated (`requireAuth`). |
+| `GET /api/forms` | Lists all active `form_definitions` and their JSONB approval pipelines. | Authenticated (`requireAuth`). |
+| `GET /api/applications` | Queries visible workflow applications. Supports `?formCode=`, `?department=`, `?status=`, and `?awaitingMyRoleOnly=true`. | Filtered automatically by Postgres `rls_apps_select`. |
+| `GET /api/applications/:id` | Returns a single application envelope, its ordered `approvals` array, and `timeline` events. | Filtered by Postgres RLS (`404` if unauthorized). |
+| `POST /api/applications` | Creates a draft or submits any of the 14 forms. Validates required payload keys via `validateFormPayload()`. | Enforces `rls_apps_insert` and policy gate check. |
+| `POST /api/applications/:id/decision` | Unified sign-off endpoint (`APPROVED`, `REJECTED`, `REVISION_REQUESTED`) for all 6 reviewer roles. | Enforces `FOR UPDATE` lock, role match, school scope, and `rls_approvals_update`. |
+| `POST /api/applications/:id/withdraw` | Allows the applicant to close an in-flight `DRAFT`, `IN_REVIEW`, or `REVISION_REQUIRED` request. | Enforces applicant ownership & status check. |
+| `GET /api/legacy/ict-applications` | Legacy read adapter querying the `purchase_applications` SQL view. | Backwards compatibility. |
+| `POST /api/legacy/ict-applications/:id/*` | Legacy route adapters (`gm-endorse`, `hr-clearance`, `it-signoff`) delegating to `processApprovalStep()`. | Backwards compatibility. |
 
 ---
 
-### 7. Implementation Checklist & Guardrails
+### 8. Production Readiness & Cleanup Checklist
 
-1. **Digital Signatures:**  Do not use canvas drawing mouse squiggles. Capture authenticated session signatures (Entra ID OID + Server Timestamp + Policy Text Hash) directly on the backend.
-2. **Postgres RLS is Mandatory:**  Never rely exclusively on API-level filters to hide data between schools. Enforce RLS directly in PostgreSQL 18.
-3. **Payroll Export Verification:**  Ensure that Central HR signs off on the exact CSV column headers and decimal representations required by Educore's payroll software before finalizing the export module.
+1. **Remove Legacy Prototype Artifacts:** Delete `.data/educore_db.json` and the unused single-role component folders (`src/components/HeadTeacherView/`, `src/components/HRView/`, `src/components/ITView/`) once final QA on `MasterSheetView` and `ApplicationDetailDrawer` is signed off.
+2. **Update Seed & Snapshot SQL (`0003_seed_data.sql` & `schema.sql`):** Update seed scripts to insert test users for `FINANCE_MANAGER`, `LOGISTICS_MANAGER`, and `LINE_MANAGER`, and seed sample applications via the v4.0 `applications` (`form_definition_id`, `payload`) schema rather than the deprecated v3.0 columns.
+3. **Database Connection Role:** Ensure production `DATABASE_URL` connects using the restricted `educore_app` PostgreSQL role (not superuser `postgres`) so declarative Row-Level Security policies are strictly enforced on every query.
