@@ -1,34 +1,20 @@
 import React, { useState } from 'react';
-import { useApp } from '../context/AppContext';
-import { PurchaseApplication } from '../types';
-import { LAPTOP_CONFIGS } from '../data/mockData';
-import { StatusBadge } from './common/StatusBadge';
-import { StepperProgress } from './common/StepperProgress';
 import {
   X,
-  FileText,
-  Clock,
-  ShieldCheck,
-  Building,
   CheckCircle2,
-  Calendar,
-  AlertCircle,
-  FileCheck,
-  Printer,
-  ChevronRight,
-  User,
-  Laptop,
-  Check,
-  DollarSign,
-  Cpu,
-  HardDrive,
-  Hash,
-  ExternalLink,
-  Download,
+  XCircle,
+  RotateCcw,
+  ShieldCheck,
+  UserCheck,
+  FileText,
+  Ban,
 } from 'lucide-react';
+import { useAppContext } from '../context/AppContext';
+import { WorkflowApplication } from '../types';
+import { StepperProgress } from './common/StepperProgress';
 
 interface ApplicationDetailDrawerProps {
-  application: PurchaseApplication;
+  application: WorkflowApplication | null;
   onClose: () => void;
 }
 
@@ -38,558 +24,543 @@ export const ApplicationDetailDrawer: React.FC<ApplicationDetailDrawerProps> = (
 }) => {
   const {
     currentUser,
-    users,
+    equipmentTiers,
     institutions,
-    getTimelineForApplication,
-    openModal,
+    submitStepDecision,
     withdrawApplication,
-  } = useApp();
+  } = useAppContext();
 
-  const [activeTab, setActiveTab] = useState<'BASIC' | 'LOGS' | 'SERVICE'>('BASIC');
+  // Reviewer sign-off state
+  const [comments, setComments] = useState('');
+  const [signature, setSignature] = useState(currentUser?.full_name || '');
+  const [submitting, setSubmitting] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
-  const applicant = users.find((u) => u.id === application.applicantId);
-  const school = institutions.find((i) => i.id === application.institutionId);
-  const laptopConfig = LAPTOP_CONFIGS[application.requestedLaptopTier];
-  const timeline = getTimelineForApplication(application.id);
+  // HR Vetting Checklist state (Used when HR_MANAGER reviews)
+  const [hrChecklist, setHrChecklist] = useState<Record<string, boolean>>({
+    employment_confirmed: true,
+    affordability_verified: true,
+    no_active_disciplinary: true,
+  });
 
-  const canEndorse =
-    currentUser.role === 'HEAD_TEACHER' &&
-    currentUser.institutionId === application.institutionId &&
-    application.status === 'PENDING_GM_REVIEW';
+  // IT Sign-off Metadata state (Used when IT_MANAGER signs off ICT_PURCHASE)
+  const [assetSerialNumber, setAssetSerialNumber] = useState('');
+  const [deductedMonthlyAmount, setDeductedMonthlyAmount] = useState<number>(
+    Number((application?.payload as any)?.estimated_monthly_amount_zmw || 0)
+  );
+  const [deductionStartDate, setDeductionStartDate] = useState('');
+  const [deductionEndDate, setDeductionEndDate] = useState('');
 
-  const canClearHR =
-    (currentUser.role === 'HR_MANAGER' || currentUser.role === 'SUPER_ADMIN') &&
-    application.status === 'PENDING_HR_REVIEW';
+  if (!application) return null;
 
-  const canSignoffIT =
-    (currentUser.role === 'IT_MANAGER' || currentUser.role === 'SUPER_ADMIN') &&
-    application.status === 'PENDING_IT_SIGNOFF';
+  const isCurrentReviewer =
+    application.status === 'IN_REVIEW' &&
+    currentUser &&
+    (currentUser.role === 'SUPER_ADMIN' ||
+      (currentUser.role === application.current_approver_role &&
+        (!['HEAD_TEACHER', 'LINE_MANAGER'].includes(currentUser.role) ||
+          currentUser.institution_id === application.institution_id)));
 
-  const canWithdraw =
-    currentUser.id === application.applicantId &&
-    ['PENDING_GM_REVIEW', 'REVISION_REQUIRED'].includes(application.status);
+  const canApplicantWithdraw =
+    currentUser?.id === application.applicant_id &&
+    ['DRAFT', 'IN_REVIEW', 'REVISION_REQUIRED'].includes(application.status);
+
+  const activeApprovalStep = application.approvals?.find(
+    (s) => s.step_order === application.current_step_order
+  );
+
+  const handleDecision = async (
+    decision: 'APPROVED' | 'REJECTED' | 'REVISION_REQUESTED'
+  ) => {
+    setSubmitting(true);
+    setActionError(null);
+    try {
+      const isHrStep = activeApprovalStep?.required_role === 'HR_MANAGER';
+      const isItPurchaseStep =
+        activeApprovalStep?.required_role === 'IT_MANAGER' &&
+        application.form_code === 'ICT_PURCHASE';
+
+      await submitStepDecision({
+        applicationId: application.id,
+        decision,
+        comments: comments.trim() || undefined,
+        digitalSignature: signature.trim() || currentUser?.full_name,
+        checklistData: isHrStep ? hrChecklist : undefined,
+        stepMetadata: isItPurchaseStep
+          ? {
+              asset_serial_number: assetSerialNumber.trim(),
+              deducted_monthly_amount_zmw: deductedMonthlyAmount,
+              deduction_start_date: deductionStartDate || null,
+              deduction_end_date: deductionEndDate || null,
+            }
+          : undefined,
+      });
+      onClose();
+    } catch (err: any) {
+      setActionError(err.message || 'Failed to record decision.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleWithdraw = async () => {
+    setSubmitting(true);
+    setActionError(null);
+    try {
+      await withdrawApplication(application.id);
+      onClose();
+    } catch (err: any) {
+      setActionError(err.message || 'Failed to withdraw application.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // Polymorphic Payload Renderer
+  const renderPayloadDetails = () => {
+    const p = application.payload as Record<string, any>;
+
+    if (application.form_code === 'ICT_PURCHASE') {
+      const tier = equipmentTiers.find((t) => t.id === p.equipment_tier_id);
+      return (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-slate-50 p-4 rounded-xl border border-slate-200 text-xs">
+          <div>
+            <span className="text-slate-500 block">Selected Equipment Tier</span>
+            <span className="font-bold text-slate-900">
+              {tier ? `${tier.title} (${tier.tier_code})` : p.equipment_tier_id}
+            </span>
+          </div>
+          <div>
+            <span className="text-slate-500 block">Repayment Period</span>
+            <span className="font-bold text-slate-900">
+              {String(p.repayment_period || '').replace(/_/g, ' ')}
+            </span>
+          </div>
+          <div>
+            <span className="text-slate-500 block">Total Cash Price</span>
+            <span className="font-bold text-slate-900">
+              ZMW {Number(tier?.price_zmw || 0).toLocaleString()}
+            </span>
+          </div>
+          <div>
+            <span className="text-slate-500 block">Estimated Monthly Deduction</span>
+            <span className="font-bold text-blue-700">
+              ZMW {Number(p.estimated_monthly_amount_zmw || 0).toLocaleString()} / mo
+            </span>
+          </div>
+        </div>
+      );
+    }
+
+    if (
+      (application.form_code === 'STORES_REQ' ||
+        application.form_code === 'STOCK_RETURN') &&
+      Array.isArray(p.items)
+    ) {
+      return (
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-3 bg-slate-50 p-3 rounded-lg border border-slate-200 text-xs">
+            {p.cost_center && (
+              <div>
+                <span className="text-slate-500 block">Cost Center</span>
+                <span className="font-semibold text-slate-900">{p.cost_center}</span>
+              </div>
+            )}
+            {p.delivery_location && (
+              <div>
+                <span className="text-slate-500 block">Delivery Location</span>
+                <span className="font-semibold text-slate-900">{p.delivery_location}</span>
+              </div>
+            )}
+            {p.return_reason && (
+              <div className="col-span-2">
+                <span className="text-slate-500 block">Return Reason</span>
+                <span className="font-semibold text-slate-900">{p.return_reason}</span>
+              </div>
+            )}
+          </div>
+
+          <div className="overflow-x-auto border border-slate-200 rounded-xl">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-slate-100 text-slate-600 uppercase text-[10px]">
+                <tr>
+                  <th className="py-2 px-3">Item Code</th>
+                  <th className="py-2 px-3">Description</th>
+                  <th className="py-2 px-3">Qty</th>
+                  {application.form_code === 'STOCK_RETURN' && (
+                    <th className="py-2 px-3">Condition</th>
+                  )}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200">
+                {p.items.map((item: any, idx: number) => (
+                  <tr key={idx}>
+                    <td className="py-2 px-3 font-mono font-medium">{item.item_code}</td>
+                    <td className="py-2 px-3">{item.description}</td>
+                    <td className="py-2 px-3 font-bold">
+                      {item.qty_requested ?? item.qty} {item.unit || ''}
+                    </td>
+                    {application.form_code === 'STOCK_RETURN' && (
+                      <td className="py-2 px-3">{item.condition}</td>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      );
+    }
+
+    // Generic structured key-value grid for all other HR, Finance, and Logistics forms
+    return (
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-slate-50 p-4 rounded-xl border border-slate-200 text-xs">
+        {Object.entries(p).map(([key, value]) => {
+          let displayVal = String(value ?? 'N/A');
+          if (key === 'target_school_id') {
+            displayVal =
+              institutions.find((i) => i.id === value)?.name || String(value);
+          } else if (Array.isArray(value)) {
+            displayVal = value.join(', ');
+          } else if (key.endsWith('_zmw')) {
+            displayVal = `ZMW ${Number(value || 0).toLocaleString()}`;
+          }
+
+          return (
+            <div key={key} className={displayVal.length > 50 ? 'sm:col-span-2' : ''}>
+              <span className="text-slate-500 capitalize block">
+                {key.replace(/_/g, ' ')}
+              </span>
+              <span className="font-semibold text-slate-900 whitespace-pre-line">
+                {displayVal}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
 
   return (
-    <div className="fixed inset-0 z-50 overflow-hidden bg-slate-900/40 backdrop-blur-xs flex justify-end transition-opacity">
-      {/* Click outside to close */}
-      <div className="flex-1" onClick={onClose} />
-
-      {/* Slide-over panel — sharp corners, sleek left shadow */}
-      <div className="w-full max-w-xl bg-white h-full shadow-[4px_0_24px_rgba(0,0,0,0.12)] border-l border-slate-200 flex flex-col z-50 animate-in slide-in-from-right duration-200">
-        {/* 1. Header */}
-        <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between bg-white shrink-0">
-          <div className="flex items-center gap-3 min-w-0">
+    <div className="fixed inset-0 z-50 flex justify-end bg-slate-900/40 backdrop-blur-xs">
+      <div className="bg-white w-full max-w-2xl h-full overflow-y-auto shadow-2xl flex flex-col justify-between">
+        <div className="p-6 space-y-6">
+          {/* Drawer Header */}
+          <div className="flex items-start justify-between border-b border-slate-100 pb-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-slate-100 text-slate-700">
+                  {application.department}
+                </span>
+                <span className="font-mono text-xs font-bold text-blue-600">
+                  {application.reference_number}
+                </span>
+              </div>
+              <h2 className="text-lg font-bold text-slate-900 mt-1">
+                {application.form_title}
+              </h2>
+              <p className="text-xs text-slate-500">
+                Applicant: <span className="font-semibold text-slate-700">{application.applicant_name}</span> ({application.applicant_employee_number}) · {application.institution_name}
+              </p>
+            </div>
             <button
+              type="button"
               onClick={onClose}
-              className="p-1.5 hover:bg-slate-100 text-slate-500 hover:text-slate-800 transition-colors cursor-pointer"
-              style={{ borderRadius: 0 }}
+              className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100"
             >
               <X className="w-5 h-5" />
             </button>
-            <div className="min-w-0">
-              <h2 className="text-sm font-bold text-slate-900 truncate">
-                {laptopConfig.title}
-              </h2>
-              <div className="flex items-center gap-2 text-[11px] text-slate-500 font-mono mt-0.5">
-                <span>{application.referenceNumber}</span>
-                <span aria-hidden="true">·</span>
-                <span>{school?.name}</span>
+          </div>
+
+          {/* Live Stepper Bar */}
+          <StepperProgress
+            approvals={application.approvals}
+            lifecycleStatus={application.status}
+            currentStepOrder={application.current_step_order}
+            submittedAt={application.applicant_signed_at}
+          />
+
+          {actionError && (
+            <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700 font-medium">
+              {actionError}
+            </div>
+          )}
+
+          {/* Section 1: Form Payload Data */}
+          <div className="space-y-2">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+              <FileText className="w-4 h-4" /> Submitted Form Details
+            </h3>
+            {renderPayloadDetails()}
+          </div>
+
+          {/* Section 2: Policy Acceptance Snapshot (If required by form) */}
+          {application.legal_text_snapshot && (
+            <div className="space-y-2">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+                <ShieldCheck className="w-4 h-4 text-blue-600" /> Signed Policy Snapshot
+              </h3>
+              <div className="p-3 rounded-lg bg-slate-50 border border-slate-200 text-[11px] text-slate-600 max-h-28 overflow-y-auto whitespace-pre-line">
+                {application.legal_text_snapshot}
               </div>
+              <p className="text-[11px] text-slate-500">
+                Digitally signed by <span className="font-serif italic font-semibold text-slate-800">{application.applicant_digital_signature}</span> on{' '}
+                {application.applicant_signed_at
+                  ? new Date(application.applicant_signed_at).toLocaleString()
+                  : 'Draft'}
+              </p>
+            </div>
+          )}
+
+          {/* Section 3: Approval Chain Sign-offs */}
+          <div className="space-y-3">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+              <UserCheck className="w-4 h-4" /> Approval Pipeline Sign-offs
+            </h3>
+            <div className="space-y-2">
+              {application.approvals?.map((step) => (
+                <div
+                  key={step.id}
+                  className="p-3.5 rounded-xl border border-slate-200 bg-white flex flex-col gap-1.5 text-xs"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-slate-800">
+                      Step {step.step_order}: {step.step_label}
+                    </span>
+                    <span
+                      className={`px-2 py-0.5 rounded font-bold text-[10px] uppercase ${
+                        step.status === 'APPROVED'
+                          ? 'bg-emerald-100 text-emerald-800'
+                          : step.status === 'REJECTED'
+                          ? 'bg-red-100 text-red-800'
+                          : step.status === 'REVISION_REQUESTED'
+                          ? 'bg-orange-100 text-orange-800'
+                          : 'bg-slate-100 text-slate-600'
+                      }`}
+                    >
+                      {step.status}
+                    </span>
+                  </div>
+
+                  {step.reviewer_name && (
+                    <div className="text-slate-500 text-[11px]">
+                      Reviewed by <span className="font-semibold text-slate-700">{step.reviewer_name}</span> on{' '}
+                      {step.signed_at ? new Date(step.signed_at).toLocaleString() : ''}
+                    </div>
+                  )}
+
+                  {step.comments && (
+                    <p className="text-slate-700 bg-slate-50 p-2 rounded border border-slate-100">
+                      "{step.comments}"
+                    </p>
+                  )}
+
+                  {/* Render IT Metadata if present */}
+                  {step.step_metadata &&
+                    Object.keys(step.step_metadata).length > 0 && (
+                      <div className="grid grid-cols-2 gap-2 pt-2 text-[11px] text-slate-600 border-t border-slate-100">
+                        {(() => {
+                          const meta = step.step_metadata as Record<string, unknown>;
+                          if (meta.asset_serial_number) {
+                            return (
+                              <div>
+                                Serial #: <span className="font-mono font-bold">{String(meta.asset_serial_number)}</span>
+                              </div>
+                            );
+                          }
+                          return null;
+                        })()}
+                        {(() => {
+                          const meta = step.step_metadata as Record<string, unknown>;
+                          if (meta.deducted_monthly_amount_zmw) {
+                            return (
+                              <div>
+                                Final Monthly Deduction:{' '}
+                                <span className="font-bold">
+                                  ZMW {Number(meta.deducted_monthly_amount_zmw).toLocaleString()}
+                                </span>
+                              </div>
+                            );
+                          }
+                          return null;
+                        })()}
+                      </div>
+                    )}
+                </div>
+              ))}
             </div>
           </div>
 
-          <div className="flex items-center gap-2 shrink-0">
-            <StatusBadge status={application.status} size="sm" />
-            <button
-              onClick={() => openModal('PHYSICAL_FORM', application.id)}
-              className="p-1.5 border border-slate-200 bg-white hover:bg-slate-50 transition-colors cursor-pointer"
-              style={{ borderRadius: 0 }}
-              title="View Official Physical Facsimile Form"
-            >
-              <FileText className="w-4 h-4 text-slate-600" />
-            </button>
-          </div>
-        </div>
+          {/* Section 4: Active Reviewer Console (Only visible to the assigned role) */}
+          {isCurrentReviewer && activeApprovalStep && (
+            <div className="p-4 rounded-2xl bg-blue-50/60 border-2 border-blue-600 space-y-4">
+              <div>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-blue-700">
+                  Action Required · {activeApprovalStep.required_role.replace(/_/g, ' ')}
+                </span>
+                <h4 className="text-sm font-bold text-slate-900">
+                  {activeApprovalStep.step_label}
+                </h4>
+              </div>
 
-        {/* 2. Top Tabs */}
-        <div className="px-6 border-b border-slate-200 bg-white shrink-0">
-          <div className="flex gap-6 text-xs font-semibold">
-            <button
-              onClick={() => setActiveTab('BASIC')}
-              className={`py-3 border-b-2 transition-colors cursor-pointer ${
-                activeTab === 'BASIC'
-                  ? 'border-slate-600 text-slate-600 font-bold'
-                  : 'border-transparent text-slate-500 hover:text-slate-800'
-              }`}
-            >
-              Basic Info
-            </button>
-            <button
-              onClick={() => setActiveTab('LOGS')}
-              className={`py-3 border-b-2 transition-colors cursor-pointer flex items-center gap-1.5 ${
-                activeTab === 'LOGS'
-                  ? 'border-slate-600 text-slate-600 font-bold'
-                  : 'border-transparent text-slate-500 hover:text-slate-800'
-              }`}
-            >
-              <span>Logs / Timeline</span>
-              <span
-                className="w-4 h-4 bg-slate-200 text-slate-600 text-[10px] flex items-center justify-center font-bold font-mono"
-                style={{ borderRadius: 0 }}
-              >
-                {timeline.length}
-              </span>
-            </button>
-            <button
-              onClick={() => setActiveTab('SERVICE')}
-              className={`py-3 border-b-2 transition-colors cursor-pointer ${
-                activeTab === 'SERVICE'
-                  ? 'border-slate-600 text-slate-600 font-bold'
-                  : 'border-transparent text-slate-500 hover:text-slate-800'
-              }`}
-            >
-              Service &amp; Payroll
-            </button>
-          </div>
-        </div>
-
-        {/* 3. Drawer Scrollable Body */}
-        <div className="flex-1 overflow-y-auto p-6 space-y-6">
-          {/* TAB 1: BASIC INFO */}
-          {activeTab === 'BASIC' && (
-            <div className="space-y-6">
-              {/* 4-Stage Stepper Progress (PRD 3.1) */}
-              <StepperProgress application={application} />
-
-              {/* Revision Required Alert Banner */}
-              {application.status === 'REVISION_REQUIRED' && (
-                <div
-                  className="p-4 border-l-4 border-amber-500 bg-amber-50 border border-amber-200 text-xs text-amber-900 space-y-1.5 shadow-2xs"
-                  style={{ borderRadius: 0 }}
-                >
-                  <div className="font-bold flex items-center gap-1.5 text-amber-800">
-                    <AlertCircle className="w-4 h-4 text-amber-600" />
-                    <span>Revision Requested by Campus Leadership</span>
-                  </div>
-                  <p
-                    className="text-[11px] italic bg-white/80 p-2.5 border border-amber-200 text-slate-800"
-                    style={{ borderRadius: 0 }}
-                  >
-                    &quot;{application.gmComments || 'Please adjust your hardware tier or repayment period.'}&quot;
-                  </p>
-                  <p className="text-[10px] text-amber-700">
-                    Per Educore policy, please withdraw this application using the button below and submit a revised request.
-                  </p>
+              {/* HR Vetting Checklist (When HR Manager is reviewing) */}
+              {activeApprovalStep.required_role === 'HR_MANAGER' && (
+                <div className="space-y-2 bg-white p-3 rounded-lg border border-blue-200 text-xs">
+                  <span className="font-bold text-slate-700 block">
+                    HR Vetting Checklist
+                  </span>
+                  {Object.entries(hrChecklist).map(([key, checked]) => (
+                    <label key={key} className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={(e) =>
+                          setHrChecklist((prev) => ({
+                            ...prev,
+                            [key]: e.target.checked,
+                          }))
+                        }
+                      />
+                      <span className="capitalize">{key.replace(/_/g, ' ')}</span>
+                    </label>
+                  ))}
                 </div>
               )}
 
-              {/* Applicant Card */}
-              <div className="bg-slate-50 border border-slate-200 p-4" style={{ borderRadius: 0 }}>
-                <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2">
-                  Staff Member &amp; Institution
-                </div>
-                <div className="flex items-center gap-3">
-                  <div
-                    className="w-10 h-10 bg-slate-700 text-white font-bold text-sm flex items-center justify-center shrink-0"
-                    style={{ borderRadius: 0 }}
-                  >
-                    {applicant?.fullName
-                      .split(' ')
-                      .map((n) => n[0])
-                      .join('')
-                      .slice(0, 2)}
-                  </div>
-                  <div>
-                    <div className="text-sm font-bold text-slate-900">{applicant?.fullName}</div>
-                    <div className="text-xs text-slate-500">
-                      ID: <span className="font-mono font-semibold">{applicant?.employeeNumber}</span> · {applicant?.department}
-                    </div>
-                    <div className="text-[11px] text-slate-500">{school?.name} · {applicant?.email}</div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Hardware Selection Card */}
-              <div className="border border-slate-200 p-4 bg-white space-y-3" style={{ borderRadius: 0 }}>
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                    Hardware Configuration
-                  </span>
-                  <span className="font-bold text-slate-600">
-                    {application.requestedLaptopTier === 'LEVEL_1' ? 'Level 1: Faculty Standard' : 'Level 2: STEM High-Performance'}
-                  </span>
-                </div>
-                <div className="grid grid-cols-2 gap-2 text-xs">
-                  <div className="bg-white border border-slate-200 p-2.5" style={{ borderRadius: 0 }}>
-                    <span className="text-[10px] text-slate-400 block font-medium">Processor</span>
-                    <span className="font-semibold text-slate-800 text-[11px]">{laptopConfig.specs.processor}</span>
-                  </div>
-                  <div className="bg-white border border-slate-200 p-2.5" style={{ borderRadius: 0 }}>
-                    <span className="text-[10px] text-slate-400 block font-medium">Memory / RAM</span>
-                    <span className="font-semibold text-slate-800 text-[11px]">{laptopConfig.specs.ram}</span>
-                  </div>
-                  <div className="bg-white border border-slate-200 p-2.5" style={{ borderRadius: 0 }}>
-                    <span className="text-[10px] text-slate-400 block font-medium">Storage NVMe</span>
-                    <span className="font-semibold text-slate-800 text-[11px]">{laptopConfig.specs.storage}</span>
-                  </div>
-                  <div className="bg-white border border-slate-200 p-2.5" style={{ borderRadius: 0 }}>
-                    <span className="text-[10px] text-slate-400 block font-medium">Display &amp; GPU</span>
-                    <span className="font-semibold text-slate-800 text-[11px]">{laptopConfig.specs.graphics}</span>
-                  </div>
-                </div>
-                <div
-                  className="bg-white border-l-4 border-emerald-500 border border-emerald-200 px-3 py-1.5 text-[11px] text-emerald-800 font-medium"
-                  style={{ borderRadius: 0 }}
-                >
-                  ✓ {laptopConfig.specs.warranty}
-                </div>
-              </div>
-
-              {/* Repayment Breakdown */}
-              <div className="border border-slate-200 p-4 bg-white space-y-2.5" style={{ borderRadius: 0 }}>
-                <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                  Repayment Schedule
-                </div>
-                <div className="flex items-center justify-between text-xs py-1 border-b border-slate-100">
-                  <span className="text-slate-500">Repayment Plan Selected:</span>
-                  <span className="font-bold text-slate-900">
-                    {application.repaymentPeriod === 'ONE_TO_TWO_MONTHS'
-                      ? '1–2 Months (Accelerated)'
-                      : application.repaymentPeriod === 'TWELVE_MONTHS'
-                      ? '12 Months (Standard)'
-                      : '24 Months (Extended)'}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between text-xs py-1 border-b border-slate-100">
-                  <span className="text-slate-500">Monthly Deduction:</span>
-                  <span className="font-mono font-extrabold text-base text-slate-900">
-                    ZMW {(application.deductedMonthlyAmount || application.estimatedMonthlyAmountZmw).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between text-xs py-1">
-                  <span className="text-slate-500">Total Purchase Value:</span>
-                  <span className="font-mono font-bold text-slate-800">
-                    ZMW {laptopConfig.priceZmw.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                  </span>
-                </div>
-              </div>
-
-              {/* Legal Terms Verification Gate (Screen 0) */}
-              <div className="border border-slate-200 p-4 bg-slate-50 text-xs space-y-2" style={{ borderRadius: 0 }}>
-                <div className="flex items-center gap-1.5 text-emerald-700 font-bold text-xs">
-                  <ShieldCheck className="w-4 h-4" />
-                  <span>Screen 0 Legal Gate Snapshot Verified</span>
-                </div>
-                <p className="text-[11px] text-slate-600 italic border-l-2 border-emerald-500 pl-2 py-0.5">
-                  &quot;{application.legalTextSnapshot || 'Terms and payroll deductions agreed.'}&quot;
-                </p>
-                <div className="grid grid-cols-2 gap-2 text-[10px] text-slate-500 pt-1 font-mono">
-                  <div>Accepted: {new Date(application.termsAcceptedAt || application.createdAt).toLocaleString('en-GB')}</div>
-                  <div>IP: {application.applicantIpAddress || '196.220.124.45'}</div>
-                  <div className="col-span-2 truncate">Signature: {application.applicantDigitalSignature || 'Authenticated'}</div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* TAB 2: LOGS & TIMELINE */}
-          {activeTab === 'LOGS' && (
-            <div className="space-y-6">
-              {/* Top Section: Lifecycle Status Journey */}
-              <div className="bg-slate-50 border border-slate-200 p-5" style={{ borderRadius: 0 }}>
-                <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-4">
-                  Lifecycle Status Journey
-                </div>
-                <div className="relative space-y-6">
-                  {/* Continuous vertical milestone spine line - centered at 8px */}
-                  <div className="absolute left-[7px] top-2 bottom-2 w-0.5 bg-emerald-400 pointer-events-none" />
-
-                  {/* Latest Milestone */}
-                  <div className="relative flex items-start gap-3">
-                    {/* Centered milestone dot column */}
-                    <div className="w-4 flex items-center justify-center shrink-0 pt-1.5 z-10">
-                      <div
-                        className="w-2 h-2 bg-emerald-500 shrink-0"
-                        style={{ borderRadius: 0 }}
+              {/* IT Provisioning Inputs (When IT Manager signs off on ICT Purchase) */}
+              {activeApprovalStep.required_role === 'IT_MANAGER' &&
+                application.form_code === 'ICT_PURCHASE' && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-white p-3 rounded-lg border border-blue-200 text-xs">
+                    <div>
+                      <label className="block font-semibold text-slate-700 mb-1">
+                        Asset Serial Number *
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="e.g., SN-ZMW-90210"
+                        value={assetSerialNumber}
+                        onChange={(e) => setAssetSerialNumber(e.target.value)}
+                        className="w-full border rounded px-2.5 py-1.5"
                       />
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between text-xs">
-                        <span
-                          className="px-2.5 py-0.5 font-bold text-[11px] bg-slate-100 text-slate-800 border border-slate-300"
-                          style={{ borderRadius: 0 }}
-                        >
-                          {application.status.replace(/_/g, ' ')}
-                        </span>
-                        <span className="font-mono text-slate-500 text-[11px]">
-                          {new Date(application.updatedAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: '2-digit' })}
-                        </span>
-                      </div>
-                      <div className="text-[11px] text-slate-500 mt-1">
-                        by {timeline.length > 0 ? timeline[timeline.length - 1].actorName : applicant?.fullName}
-                      </div>
+                    <div>
+                      <label className="block font-semibold text-slate-700 mb-1">
+                        Final Monthly Deduction (ZMW) *
+                      </label>
+                      <input
+                        type="number"
+                        value={deductedMonthlyAmount}
+                        onChange={(e) =>
+                          setDeductedMonthlyAmount(Number(e.target.value))
+                        }
+                        className="w-full border rounded px-2.5 py-1.5"
+                      />
                     </div>
-                  </div>
-
-                  {/* Previous Milestone */}
-                  {timeline.length > 1 && (
-                    <div className="relative flex items-start gap-3">
-                      {/* Centered milestone dot column */}
-                      <div className="w-4 flex items-center justify-center shrink-0 pt-1.5 z-10">
-                        <div
-                          className="w-2 h-2 bg-slate-400 shrink-0"
-                          style={{ borderRadius: 0 }}
-                        />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center justify-between text-xs">
-                          <span className="font-semibold text-slate-600">
-                            {timeline[0].actionType.replace(/_/g, ' ')}
-                          </span>
-                          <span className="font-mono text-slate-400 text-[11px]">
-                            {new Date(timeline[0].createdAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: '2-digit' })}
-                          </span>
-                        </div>
-                        <div className="text-[11px] text-slate-400 mt-0.5">
-                          by {timeline[0].actorName}
-                        </div>
-                      </div>
+                    <div>
+                      <label className="block font-semibold text-slate-700 mb-1">
+                        Deduction Start Date
+                      </label>
+                      <input
+                        type="date"
+                        value={deductionStartDate}
+                        onChange={(e) => setDeductionStartDate(e.target.value)}
+                        className="w-full border rounded px-2.5 py-1.5"
+                      />
                     </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Bottom Section: Chronological Audit Logs */}
-              <div className="space-y-4">
-                <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
-                  Detailed Change History &amp; Audit Entries
-                </div>
-
-                {/* Group by date in reverse order */}
-                {Object.entries(
-                  [...timeline].reverse().reduce<Record<string, typeof timeline>>((acc, evt) => {
-                    const dateKey = new Date(evt.createdAt).toLocaleDateString('en-GB', {
-                      day: 'numeric',
-                      month: 'long',
-                      year: 'numeric',
-                    });
-                    if (!acc[dateKey]) acc[dateKey] = [];
-                    acc[dateKey].push(evt);
-                    return acc;
-                  }, {})
-                ).map(([dateLabel, events]) => (
-                  <div key={dateLabel} className="space-y-2">
-                    <div className="text-xs font-bold text-slate-800 border-b border-slate-100 pb-1 flex items-center gap-2">
-                      <Calendar className="w-3.5 h-3.5 text-slate-400" />
-                      <span>{dateLabel}</span>
-                    </div>
-
-                    <div className="space-y-2 pl-2">
-                      {events.map((evt) => (
-                        <div
-                          key={evt.id}
-                          className="text-xs text-slate-700 border border-slate-200 bg-white p-3 hover:border-slate-300 transition-colors"
-                          style={{ borderRadius: 0 }}
-                        >
-                          <div className="flex items-center justify-between gap-2 mb-1">
-                            <span className="font-mono font-bold text-slate-700 text-[11px]">
-                              {application.referenceNumber}
-                            </span>
-                            <span
-                              className="font-mono text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200 px-1.5 py-0.5"
-                              style={{ borderRadius: 0 }}
-                            >
-                              {evt.actionType}
-                            </span>
-                          </div>
-                          <p className="text-slate-800 leading-snug">
-                            {evt.comments || `Action ${evt.actionType} recorded.`}
-                          </p>
-                          <div className="mt-1.5 pt-1.5 border-t border-slate-200/50 flex items-center justify-between text-[10px] text-slate-500 font-mono">
-                            <span>Actor: <strong className="text-slate-700">{evt.actorName}</strong> ({evt.actorRole})</span>
-                            {evt.toStatus && <span>Status: {evt.toStatus}</span>}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* TAB 3: SERVICE & PAYROLL DEDUCTION */}
-          {activeTab === 'SERVICE' && (
-            <div className="space-y-6">
-              {/* Part 3: HR Clearance Section */}
-              <div className="border border-slate-200 p-4 bg-white space-y-3" style={{ borderRadius: 0 }}>
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-slate-900 flex items-center gap-2">
-                    <User className="w-4 h-4 text-sky-600" />
-                    <span>Part 3: Central HR Clearance</span>
-                  </span>
-                  {application.hrSignedAt ? (
-                    <span
-                      className="px-2 py-0.5 text-[10px] font-mono font-bold border border-emerald-400 text-emerald-700 bg-white"
-                      style={{ borderRadius: 0 }}
-                    >
-                      Cleared
-                    </span>
-                  ) : (
-                    <span
-                      className="px-2 py-0.5 text-[10px] font-mono font-bold border border-amber-400 text-amber-700 bg-white"
-                      style={{ borderRadius: 0 }}
-                    >
-                      Pending HR
-                    </span>
-                  )}
-                </div>
-
-                {application.hrChecklist && (
-                  <div className="space-y-1.5 text-xs">
-                    <div className="flex items-center gap-2">
-                      <Check className={`w-3.5 h-3.5 ${application.hrChecklist.probationCleared ? 'text-emerald-600' : 'text-slate-300'}`} />
-                      <span>Probation clearance confirmed</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Check className={`w-3.5 h-3.5 ${application.hrChecklist.zeroSalaryAdvanceConflicts ? 'text-emerald-600' : 'text-rose-600'}`} />
-                      <span>Zero active salary advance conflicts</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Check className={`w-3.5 h-3.5 ${application.hrChecklist.debtRatioWithinThreshold ? 'text-emerald-600' : 'text-rose-600'}`} />
-                      <span>Debt ratio within Educore 33% maximum threshold</span>
+                    <div>
+                      <label className="block font-semibold text-slate-700 mb-1">
+                        Deduction End Date
+                      </label>
+                      <input
+                        type="date"
+                        value={deductionEndDate}
+                        onChange={(e) => setDeductionEndDate(e.target.value)}
+                        className="w-full border rounded px-2.5 py-1.5"
+                      />
                     </div>
                   </div>
                 )}
 
-                {application.hrComments && (
-                  <div className="p-2.5 bg-slate-50 text-xs text-slate-700 italic border border-slate-100" style={{ borderRadius: 0 }}>
-                    &quot;{application.hrComments}&quot;
-                  </div>
-                )}
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Reviewer Comments / Notes
+                </label>
+                <textarea
+                  rows={2}
+                  value={comments}
+                  onChange={(e) => setComments(e.target.value)}
+                  placeholder="Optional endorsement or rejection remarks..."
+                  className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs"
+                />
               </div>
 
-              {/* Part 4: IT Provisioning Section */}
-              <div className="border border-slate-200 p-4 bg-white space-y-3" style={{ borderRadius: 0 }}>
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-slate-900 flex items-center gap-2">
-                    <Laptop className="w-4 h-4 text-purple-600" />
-                    <span>Part 4: Central IT Allocation</span>
-                  </span>
-                  {application.status === 'APPROVED' ? (
-                    <span
-                      className="px-2 py-0.5 text-[10px] font-mono font-bold border border-emerald-400 text-emerald-700 bg-white"
-                      style={{ borderRadius: 0 }}
-                    >
-                      Allocated &amp; Sealed
-                    </span>
-                  ) : (
-                    <span
-                      className="px-2 py-0.5 text-[10px] font-mono font-bold border border-amber-400 text-amber-700 bg-white"
-                      style={{ borderRadius: 0 }}
-                    >
-                      Awaiting Signoff
-                    </span>
-                  )}
-                </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Digital Signature *
+                </label>
+                <input
+                  type="text"
+                  value={signature}
+                  onChange={(e) => setSignature(e.target.value)}
+                  className="w-full bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs font-serif italic"
+                />
+              </div>
 
-                <div className="grid grid-cols-2 gap-2 text-xs">
-                  <div className="bg-white border border-slate-200 p-2" style={{ borderRadius: 0 }}>
-                    <span className="text-[10px] text-slate-400 block font-medium">Asset Serial Number</span>
-                    <span className="font-mono font-bold text-slate-900">
-                      {application.assetSerialNumber || 'Pending IT Allocation'}
-                    </span>
-                  </div>
-                  <div className="bg-white border border-slate-200 p-2" style={{ borderRadius: 0 }}>
-                    <span className="text-[10px] text-slate-400 block font-medium">Deduction Schedule</span>
-                    <span className="font-bold text-slate-900">
-                      {application.deductionStartDate ? `${application.deductionStartDate} to ${application.deductionEndDate}` : 'Pending IT Schedule'}
-                    </span>
-                  </div>
-                </div>
-
-                {application.itComments && (
-                  <div className="p-2.5 bg-slate-50 text-xs text-slate-700 italic border border-slate-100" style={{ borderRadius: 0 }}>
-                    &quot;{application.itComments}&quot;
-                  </div>
-                )}
+              <div className="flex flex-wrap items-center gap-2 pt-2">
+                <button
+                  type="button"
+                  disabled={submitting || !signature.trim()}
+                  onClick={() => handleDecision('APPROVED')}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700 disabled:opacity-50"
+                >
+                  <CheckCircle2 className="w-4 h-4" /> Approve & Advance
+                </button>
+                <button
+                  type="button"
+                  disabled={submitting}
+                  onClick={() => handleDecision('REVISION_REQUESTED')}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-orange-500 text-white text-xs font-bold hover:bg-orange-600 disabled:opacity-50"
+                >
+                  <RotateCcw className="w-4 h-4" /> Request Revision
+                </button>
+                <button
+                  type="button"
+                  disabled={submitting}
+                  onClick={() => handleDecision('REJECTED')}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-red-600 text-white text-xs font-bold hover:bg-red-700 disabled:opacity-50"
+                >
+                  <XCircle className="w-4 h-4" /> Reject
+                </button>
               </div>
             </div>
           )}
         </div>
 
-        {/* 4. Action Footer */}
-        <div className="bg-white border-t border-slate-200 p-4 shrink-0 flex items-center justify-between gap-3">
+        {/* Footer Actions */}
+        <div className="p-4 border-t border-slate-200 bg-slate-50 flex justify-between items-center">
+          {canApplicantWithdraw ? (
+            <button
+              type="button"
+              disabled={submitting}
+              onClick={handleWithdraw}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg border border-red-200 bg-red-50 text-red-700 text-xs font-semibold hover:bg-red-100"
+            >
+              <Ban className="w-3.5 h-3.5" /> Withdraw Application
+            </button>
+          ) : (
+            <div />
+          )}
           <button
-            onClick={() => openModal('PHYSICAL_FORM', application.id)}
-            className="px-3 py-2 bg-white border border-slate-200 text-slate-700 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer hover:bg-slate-50"
-            style={{ borderRadius: 0 }}
+            type="button"
+            onClick={onClose}
+            className="px-4 py-2 rounded-lg border border-slate-300 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-100"
           >
-            <Printer className="w-4 h-4 text-slate-500" />
-            <span>Official Form</span>
+            Close
           </button>
-
-          <div className="flex items-center gap-2">
-            {canEndorse && (
-              <button
-                onClick={() => {
-                  onClose();
-                  openModal('ENDORSE_PART2', application.id);
-                }}
-                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-xs font-bold text-white shadow-sm transition-colors cursor-pointer"
-                style={{ borderRadius: 0 }}
-              >
-                Endorse Part 2
-              </button>
-            )}
-
-            {canClearHR && (
-              <button
-                onClick={() => {
-                  onClose();
-                  openModal('CLEAR_PART3', application.id);
-                }}
-                className="px-4 py-2 bg-slate-600 hover:bg-slate-700 text-xs font-bold text-white shadow-sm transition-colors cursor-pointer"
-                style={{ borderRadius: 0 }}
-              >
-                Clear Part 3 (HR)
-              </button>
-            )}
-
-            {canSignoffIT && (
-              <button
-                onClick={() => {
-                  onClose();
-                  openModal('SIGNOFF_PART4', application.id);
-                }}
-                className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-xs font-bold text-white shadow-sm transition-colors cursor-pointer"
-                style={{ borderRadius: 0 }}
-              >
-                Sign-off Part 4 (IT)
-              </button>
-            )}
-
-            {canWithdraw && (
-              <button
-                onClick={async () => {
-                  if (window.confirm('Are you sure you want to withdraw this application? This action cannot be undone.')) {
-                    const res = await withdrawApplication(application.id);
-                    if (res && !res.success) {
-                      alert(`Withdrawal failed: ${res.error || 'Database error'}`);
-                      return;
-                    }
-                    onClose();
-                  }
-                }}
-                className="px-3 py-2 bg-white border border-red-300 text-red-700 text-xs font-semibold transition-colors cursor-pointer hover:bg-red-50"
-                style={{ borderRadius: 0 }}
-              >
-                Withdraw Request
-              </button>
-            )}
-          </div>
         </div>
       </div>
     </div>
   );
 };
+
+export default ApplicationDetailDrawer;

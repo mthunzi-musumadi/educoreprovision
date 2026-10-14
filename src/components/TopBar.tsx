@@ -1,5 +1,5 @@
 import React from 'react';
-import { useApp } from '../context/AppContext';
+import { useAppContext as useApp } from '../context/AppContext';
 import { ChevronRight, Building, Laptop } from 'lucide-react';
 
 interface TopBarProps {
@@ -7,21 +7,21 @@ interface TopBarProps {
 }
 
 export const TopBar: React.FC<TopBarProps> = ({ currentTab }) => {
-  const { currentUser, institutions, applications, openModal, isDbConnected } = useApp();
+  const { currentUser, institutions, applications } = useApp();
 
-  const currentInstitution = institutions.find((i) => i.id === currentUser.institutionId);
+  const currentInstitution = institutions.find((i) => i.id === currentUser?.institution_id);
 
   // Check if current user has an in-flight request
   const myActiveRequest = applications.find(
     (app) =>
-      app.applicantId === currentUser.id &&
+      app.applicant_id === currentUser?.id &&
       ['PENDING_GM_REVIEW', 'PENDING_HR_REVIEW', 'PENDING_IT_SIGNOFF', 'REVISION_REQUIRED'].includes(app.status)
   );
 
   const getBreadcrumbTitle = () => {
     switch (currentTab) {
       case 'staff-applicants':
-        return currentUser.role === 'HEAD_TEACHER' ? 'Campus Staff Applicants' : 'Staff Applicants Directory';
+        return currentUser?.role === 'HEAD_TEACHER' ? 'Campus Staff Applicants' : 'Staff Applicants Directory';
       case 'my-requests':
         return 'My Applications';
       case 'school-triage':
@@ -62,20 +62,18 @@ export const TopBar: React.FC<TopBarProps> = ({ currentTab }) => {
           <span className="font-semibold truncate max-w-[130px]">{currentInstitution?.name || 'Educore Services'}</span>
           <span className="text-slate-300">·</span>
           <span className="text-slate-700 font-mono font-bold text-[10px] uppercase whitespace-nowrap tracking-wide">
-            {currentUser.role.replace(/_/g, ' ')}
+            {currentUser?.role.replace(/_/g, ' ')}
           </span>
         </div>
 
         {/* + New Request CTA */}
         {currentTab === 'my-requests' && !myActiveRequest && (
-          <button
-            onClick={() => openModal('NEW_REQUEST')}
-            className="px-3.5 py-1.5 bg-slate-700 hover:bg-slate-800 text-white text-xs font-semibold shadow-sm flex items-center gap-1.5 transition-colors cursor-pointer"
-            style={{ borderRadius: 0 }}
+          <div className="px-3.5 py-1.5 bg-slate-700 text-white text-xs font-semibold shadow-sm flex items-center gap-1.5 transition-colors cursor-pointer"
+               style={{ borderRadius: 0 }}
           >
             <Laptop className="w-3.5 h-3.5" />
             <span>+ New Request</span>
-          </button>
+          </div>
         )}
       </div>
     </header>

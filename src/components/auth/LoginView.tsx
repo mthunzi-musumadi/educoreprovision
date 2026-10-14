@@ -1,22 +1,55 @@
 import React, { useState } from 'react';
-import { useApp } from '../../context/AppContext';
-import { AlertCircle, Lock } from 'lucide-react';
+import { useAppContext } from '../../context/AppContext';
+import { AlertCircle, Lock, User } from 'lucide-react';
+
+interface DbDirectoryUser {
+  id: string;
+  entra_oid: string;
+  full_name: string;
+  email: string;
+  role: string;
+  institution_name: string;
+  institution_code: string;
+}
 
 export const LoginView: React.FC = () => {
   const {
+    setActiveEntraOid,
     loginWithMicrosoft,
     authConfig,
-    authError,
-    setAuthError,
-    ssoLogin,
-    users,
-  } = useApp();
+    error: authError,
+    currentUser,
+  } = useAppContext();
 
+  const [dbUsers, setDbUsers] = useState<DbDirectoryUser[]>([]);
+  const [isLoadingDbUsers, setIsLoadingDbUsers] = useState<boolean>(true);
   const [showSandbox, setShowSandbox] = useState(false);
-  const [selectedUserId, setSelectedUserId] = useState('');
+  const [selectedOid, setSelectedOid] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const activeUserId = selectedUserId || users[0]?.id || '';
+  // Load real users directly from PostgreSQL
+  React.useEffect(() => {
+    let isMounted = true;
+    fetch('/api/users')
+      .then((res) => (res.ok ? res.json() : []))
+      .then((data: DbDirectoryUser[]) => {
+        if (!isMounted) return;
+        setDbUsers(data);
+        if (data.length > 0) {
+          setSelectedOid(data[0].entra_oid);
+        }
+      })
+      .catch((err) => {
+        console.error('Failed to load database users for sandbox:', err);
+      })
+      .finally(() => {
+        if (isMounted) setIsLoadingDbUsers(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const handleMicrosoftLogin = () => {
     setIsSubmitting(true);
@@ -25,10 +58,10 @@ export const LoginView: React.FC = () => {
 
   const handleSandboxLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!activeUserId) return;
+    if (!selectedOid) return;
     setIsSubmitting(true);
     try {
-      await ssoLogin(activeUserId);
+      setActiveEntraOid(selectedOid);
     } finally {
       setIsSubmitting(false);
     }
@@ -76,7 +109,11 @@ export const LoginView: React.FC = () => {
               </div>
               <button
                 type="button"
-                onClick={() => setAuthError(null)}
+                onClick={() => {
+                  if (authError) {
+                    setActiveEntraOid(null);
+                  }
+                }}
                 className="text-rose-500 hover:text-rose-800 text-xs font-bold px-1.5 py-0.5 cursor-pointer focus-visible:outline-2 focus-visible:outline-rose-600"
                 aria-label="Dismiss error notification"
               >
@@ -104,7 +141,7 @@ export const LoginView: React.FC = () => {
           </button>
 
           {/* Development / Sandbox Sign-In Fallback */}
-          {(!authConfig?.configured || showSandbox) && (
+          {(!currentUser) && (
             <div className="mt-6 pt-6 border-t border-slate-200">
               <form onSubmit={handleSandboxLogin} className="space-y-3">
                 <div className="flex items-center justify-between">
@@ -114,41 +151,50 @@ export const LoginView: React.FC = () => {
                   >
                     Sandbox profile
                   </label>
-                  {!authConfig?.configured && (
-                    <span className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 font-medium">
+                  <span className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 font-medium">
                       Dev mode
                     </span>
-                  )}
                 </div>
 
                 <div className="flex gap-2">
                   <select
                     id="sandbox-account-select"
-                    value={activeUserId}
-                    onChange={(e) => setSelectedUserId(e.target.value)}
-                    className="flex-1 min-w-0 text-xs bg-slate-50 border border-slate-300 px-3 py-2 text-slate-800 focus-visible:outline-2 focus-visible:outline-slate-900"
+                    value={selectedOid}
+                    onChange={(e) => setSelectedOid(e.target.value)}
+                    disabled={isLoadingDbUsers || dbUsers.length === 0}
+                    className="flex-1 min-w-0 text-xs bg-slate-50 border border-slate-300 px-3 py-2 text-slate-800 focus-visible:outline-2 focus-visible:outline-slate-900 disabled:opacity-50"
                   >
-                    {users.map((u) => (
-                      <option key={u.id} value={u.id}>
-                        {u.fullName} ({u.role.replace(/_/g, ' ')})
-                      </option>
-                    ))}
+                    {isLoadingDbUsers ? (
+                      <option value="">Loading users from database...</option>
+                    ) : dbUsers.length === 0 ? (
+                      <option value="">No users found in database</option>
+                    ) : (
+                      dbUsers.map((u) => (
+                        <option key={u.id} value={u.entra_oid}>
+                          {u.full_name} — {u.role.replace(/_/g, ' ')} ({u.institution_name})
+                        </option>
+                      ))
+                    )}
                   </select>
 
                   <button
                     type="submit"
-                    disabled={isSubmitting || !activeUserId}
+                    disabled={isSubmitting || !selectedOid || isLoadingDbUsers}
                     className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer border border-slate-300 disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-slate-900"
                   >
                     {isSubmitting ? 'Signing in…' : 'Sign in'}
                   </button>
                 </div>
+                
+                <p className="text-[10px] text-slate-500 text-center">
+                  Select a test user above. Their Entra OID will be used to authenticate.
+                </p>
               </form>
             </div>
           )}
 
           {/* Quiet toggle for developers when live Azure is configured */}
-          {authConfig?.configured && !showSandbox && users.length > 0 && (
+          {currentUser && (
             <div className="mt-6 pt-5 border-t border-slate-100 text-center">
               <button
                 type="button"

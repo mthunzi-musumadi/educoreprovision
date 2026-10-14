@@ -1,25 +1,39 @@
 import express, { Request, Response, NextFunction } from 'express';
+import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import crypto from 'crypto';
-import { createServer as createViteServer } from 'vite';
 import dotenv from 'dotenv';
-import { dbService } from './server/db.ts';
-import { User } from './src/types/index.ts';
 import {
   getMicrosoftOidcConfig,
-  mapEntraRoleToUserRole,
+  generatePkce,
   parseJwtPayload,
+  mapEntraRoleToUserRole,
   createSessionToken,
   verifySessionToken,
-  generatePkce,
 } from './server/auth.ts';
+import {
+  pool,
+  withRlsContext,
+  getFormDefinitions,
+  getApplicationsQueue,
+  createApplication,
+  processApprovalStep,
+  getLegacyPurchaseApplications,
+  endorseIctApplicationByGM,
+  clearIctApplicationByHR,
+  signOffIctApplicationByIT,
+  upsertUserFromEntraClaims,
+  FormCode,
+  LifecycleStatus,
+} from './server/db.ts';
 
 dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Helper to parse cookies from header
 function parseCookies(cookieHeader?: string): Record<string, string> {
   const list: Record<string, string> = {};
   if (!cookieHeader) return list;
@@ -33,60 +47,74 @@ function parseCookies(cookieHeader?: string): Record<string, string> {
   return list;
 }
 
-async function startServer() {
-  await dbService.initialize();
+// Extend Express Request to carry the authenticated Entra OID
+declare global {
+  namespace Express {
+    interface Request {
+      entraOid?: string;
+    }
+  }
+}
 
+export async function createApp() {
   const app = express();
-  const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+  app.set('trust proxy', true);
+  app.use(express.json({ limit: '2mb' }));
 
-  app.use(express.json());
+  // ==========================================================================
+  // 1. AUTHENTICATION MIDDLEWARE (Links Express -> Postgres RLS)
+  // ==========================================================================
+  app.use('/api', (req: Request, res: Response, next: NextFunction) => {
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    let resolvedOid: string | undefined = undefined;
 
-  // Middleware to resolve actor user from x-user-id header, Authorization Bearer, or cookie
-  // Middleware to resolve actor user: verified cryptographic session token takes primary precedence
-  const resolveActorUser = async (req: Request, res: Response, next: NextFunction) => {
-    let userIdentifier: string | undefined = undefined;
+    // 1. Check explicit header
+    const headerOid = req.headers['x-entra-oid'] as string | undefined;
+    if (headerOid && uuidRegex.test(headerOid)) {
+      resolvedOid = headerOid;
+    }
 
-    // 1. Check Bearer token in Authorization header
-    if (req.headers.authorization?.startsWith('Bearer ')) {
+    // 2. Check Bearer token in Authorization header
+    if (!resolvedOid && req.headers.authorization?.startsWith('Bearer ')) {
       const token = req.headers.authorization.substring(7);
       const session = verifySessionToken(token);
-      if (session) {
-        userIdentifier = session.userId;
+      if (session?.entraOid && uuidRegex.test(session.entraOid)) {
+        resolvedOid = session.entraOid;
       }
     }
 
-    // 2. Check educore_session HttpOnly cookie
-    if (!userIdentifier && req.headers.cookie) {
+    // 3. Check educore_session HttpOnly cookie
+    if (!resolvedOid && req.headers.cookie) {
       const cookies = parseCookies(req.headers.cookie);
       if (cookies.educore_session) {
         const session = verifySessionToken(cookies.educore_session);
-        if (session) {
-          userIdentifier = session.userId;
+        if (session?.entraOid && uuidRegex.test(session.entraOid)) {
+          resolvedOid = session.entraOid;
         }
       }
     }
 
-    // 3. Fallback to explicit x-user-id header (for API test suites and background jobs)
-    if (!userIdentifier && req.headers['x-user-id']) {
-      userIdentifier = req.headers['x-user-id'] as string;
+    if (resolvedOid) {
+      req.entraOid = resolvedOid;
     }
 
-    if (userIdentifier) {
-      try {
-        const user = await dbService.getUserById(userIdentifier);
-        (req as any).actorUser = user;
-      } catch (e) {
-        console.error('Failed to resolve actor user:', e);
-      }
+    next();
+  });
+
+  const requireAuth = (req: Request, res: Response, next: NextFunction) => {
+    if (!req.entraOid) {
+      return res.status(401).json({
+        error: 'Unauthorized: Missing or invalid x-entra-oid / Bearer token claim.',
+      });
     }
     next();
   };
 
-  app.use(resolveActorUser);
+  // ==========================================================================
+  // 1.1 MICROSOFT ENTRA ID OIDC / OAUTH 2.0 PKCE ROUTES
+  // ==========================================================================
 
-  // --- Authentication Routes (Microsoft Entra ID OIDC / OAuth2 & Sessions) ---
-
-  app.get('/api/auth/config', (req, res) => {
+  app.get('/api/auth/config', (req: Request, res: Response) => {
     const origin = `${req.protocol}://${req.get('host')}`;
     const config = getMicrosoftOidcConfig(origin);
     res.json({
@@ -98,7 +126,7 @@ async function startServer() {
     });
   });
 
-  app.get('/api/auth/login', (req, res) => {
+  app.get('/api/auth/login', (req: Request, res: Response) => {
     const origin = `${req.protocol}://${req.get('host')}`;
     const config = getMicrosoftOidcConfig(origin);
     const state = crypto.randomBytes(16).toString('hex');
@@ -107,7 +135,8 @@ async function startServer() {
     res.setHeader('Set-Cookie', `pkce_verifier=${codeVerifier}; Path=/; HttpOnly; SameSite=Lax; Max-Age=600`);
 
     if (config.isConfigured) {
-      const authUrl = `https://login.microsoftonline.com/${config.tenantId}/oauth2/v2.0/authorize?` +
+      const authUrl =
+        `https://login.microsoftonline.com/${config.tenantId}/oauth2/v2.0/authorize?` +
         new URLSearchParams({
           client_id: config.clientId,
           response_type: 'code',
@@ -130,14 +159,17 @@ async function startServer() {
           message: 'Microsoft Entra ID credentials not configured in .env.',
         });
       }
-      // Gracefully redirect back to portal with clear setup guidance
-      return res.redirect(`/?auth_error=${encodeURIComponent('Microsoft Entra ID credentials (MICROSOFT_CLIENT_ID, MICROSOFT_TENANT_ID) are not yet configured in .env.')}`);
+      return res.redirect(
+        `/?auth_error=${encodeURIComponent(
+          'Microsoft Entra ID credentials (MICROSOFT_CLIENT_ID, MICROSOFT_TENANT_ID) are not configured in .env.'
+        )}`
+      );
     }
   });
 
-  app.get('/api/auth/callback', async (req, res) => {
+  app.get('/api/auth/callback', async (req: Request, res: Response) => {
     try {
-      const { code, state, error, error_description } = req.query;
+      const { code, error, error_description } = req.query;
       if (error) {
         return res.redirect(`/?auth_error=${encodeURIComponent(String(error_description || error))}`);
       }
@@ -150,7 +182,6 @@ async function startServer() {
       const cookies = parseCookies(req.headers.cookie);
       const codeVerifier = cookies.pkce_verifier;
 
-      // Microsoft Entra ID Single-Page Application (SPA) registrations require an Origin header matching the redirect URI
       let appOrigin = origin;
       try {
         const parsed = new URL(config.redirectUri);
@@ -171,7 +202,6 @@ async function startServer() {
       if (codeVerifier) {
         tokenParams.append('code_verifier', codeVerifier);
       }
-      // In Microsoft Entra ID with PKCE, public clients (SPA/Native) must NOT send client_secret
       if (!config.isPublicClient && config.clientSecret) {
         tokenParams.append('client_secret', config.clientSecret);
       }
@@ -186,9 +216,8 @@ async function startServer() {
         const errText = await tokenRes.text();
         console.error('Failed to exchange code with Microsoft token endpoint:', errText);
 
-        // Auto-recovery: If Microsoft reports AADSTS700025 (client is public), retry without client_secret immediately
         if (errText.includes('AADSTS700025') && tokenParams.has('client_secret')) {
-          console.log('[Microsoft Entra ID] App Registration is configured as a Public Client in Azure AD. Retrying token exchange with PKCE without client_secret...');
+          console.log('[Microsoft Entra ID] Retrying without client_secret for public client...');
           tokenParams.delete('client_secret');
           tokenRes = await fetch(`https://login.microsoftonline.com/${config.tenantId}/oauth2/v2.0/token`, {
             method: 'POST',
@@ -199,13 +228,13 @@ async function startServer() {
 
         if (!tokenRes.ok) {
           const finalErr = await tokenRes.text().catch(() => errText);
-          console.error('Final token exchange error:', finalErr);
           return res.redirect(`/?auth_error=${encodeURIComponent('Token exchange failed: ' + finalErr.slice(0, 160))}`);
         }
       }
 
       const tokenData = (await tokenRes.json()) as any;
-      const idTokenPayload = parseJwtPayload(tokenData.id_token) || {};
+      const idToken = tokenData.id_token;
+      const idTokenPayload = parseJwtPayload(idToken) || {};
 
       const entraOid = idTokenPayload.oid || idTokenPayload.sub;
       const email = idTokenPayload.preferred_username || idTokenPayload.email || idTokenPayload.upn;
@@ -220,295 +249,374 @@ async function startServer() {
         idTokenPayload.officeLocation ||
         idTokenPayload.department;
 
-      const user = await dbService.upsertUserFromEntraClaims({
+      const user = await upsertUserFromEntraClaims({
         entraOid,
         email,
         fullName,
         role: appRole,
-        employeeNumber,
         institutionCode,
+        employeeNumber,
       });
 
       const sessionToken = createSessionToken({
         userId: user.id,
-        entraOid: user.entraOid,
+        entraOid: user.entra_oid,
         role: user.role,
         email: user.email,
       });
 
       res.setHeader('Set-Cookie', `educore_session=${sessionToken}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800`);
-      res.redirect(`/?sso_success=true&user_id=${user.id}&token=${sessionToken}`);
+      res.redirect(`/?sso_success=true&user_id=${user.id}&entra_oid=${user.entra_oid}&token=${sessionToken}`);
     } catch (err: any) {
       console.error('OAuth callback processing error:', err);
       res.redirect(`/?auth_error=${encodeURIComponent(err.message)}`);
     }
   });
 
-  app.post('/api/auth/sso-login', async (req, res) => {
+  app.get('/api/auth/me', requireAuth, async (req: Request, res: Response) => {
     try {
-      const { userId, email, entraOid } = req.body;
-      let user: User | undefined;
-      if (userId) {
-        user = await dbService.getUserById(userId);
-      } else if (entraOid) {
-        user = await dbService.getUserById(entraOid);
-      } else if (email) {
-        user = await dbService.getUserById(email);
+      const userRes = await pool.query(
+        `SELECT u.*, i.name AS institution_name, i.code AS institution_code
+         FROM public.users u
+         JOIN public.institutions i ON u.institution_id = i.id
+         WHERE u.entra_oid = $1 AND u.is_active = true`,
+        [req.entraOid]
+      );
+      if (userRes.rows.length === 0) {
+        return res.status(404).json({ error: 'User not found in Educore directory.' });
       }
-
-      if (!user) {
-        return res.status(404).json({ error: 'User not found in directory registry.' });
-      }
-
-      const sessionToken = createSessionToken({
-        userId: user.id,
-        entraOid: user.entraOid,
-        role: user.role,
-        email: user.email,
-      });
-
-      res.setHeader('Set-Cookie', `educore_session=${sessionToken}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800`);
-      res.json({
-        success: true,
-        user,
-        token: sessionToken,
-      });
+      res.json({ authenticated: true, user: userRes.rows[0], entraOid: req.entraOid });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
 
-  app.get('/api/auth/me', (req, res) => {
-    const actorUser = (req as any).actorUser as User | undefined;
-    if (!actorUser) {
-      return res.status(401).json({ authenticated: false, message: 'No active session or x-user-id' });
-    }
-    res.json({
-      authenticated: true,
-      user: actorUser,
-      entraOid: actorUser.entraOid,
-      role: actorUser.role,
-    });
-  });
-
-  app.post('/api/auth/logout', (req, res) => {
+  app.post('/api/auth/logout', (_req: Request, res: Response) => {
     res.setHeader('Set-Cookie', 'educore_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0');
     res.json({ success: true, message: 'Logged out successfully.' });
   });
 
-  // --- Core API Routes ---
-
-  app.get('/api/health', (req, res) => {
-    res.json({
-      status: 'healthy',
-      service: 'Educore Provision Backend',
-      database: 'PostgreSQL 18 (educoreprovision)',
-      auth: 'Microsoft Entra ID (OIDC / OAuth2 with PKCE & App Roles)',
-      timestamp: new Date().toISOString(),
-    });
-  });
-
-  app.get('/api/institutions', async (req, res) => {
+  // Sandbox quick-switch / SSO login endpoint
+  app.post('/api/auth/sso-login', async (req: Request, res: Response) => {
     try {
-      const institutions = await dbService.getInstitutions();
-      res.json(institutions);
+      const { userId } = req.body;
+      if (!userId) {
+        return res.status(400).json({ error: 'userId is required' });
+      }
+      const userRes = await pool.query(
+        `SELECT u.*, i.name AS institution_name, i.code AS institution_code
+         FROM public.users u
+         JOIN public.institutions i ON u.institution_id = i.id
+         WHERE u.id::text = $1 OR u.entra_oid::text = $1`,
+        [userId]
+      );
+      if (userRes.rows.length === 0) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+      const user = userRes.rows[0];
+      const sessionToken = createSessionToken({
+        userId: user.id,
+        entraOid: user.entra_oid,
+        role: user.role,
+        email: user.email,
+      });
+      res.setHeader('Set-Cookie', `educore_session=${sessionToken}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800`);
+      res.json({ success: true, user, token: sessionToken, entraOid: user.entra_oid });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
 
-  app.get('/api/users', async (req, res) => {
+  // Return active users list for directory and sandbox profile selector
+  app.get('/api/users', async (_req: Request, res: Response) => {
     try {
-      const users = await dbService.getUsers();
-      res.json(users);
+      const userRes = await pool.query(
+        `SELECT u.id, u.entra_oid, u.full_name, u.email, u.role, u.employee_number,
+                i.name AS institution_name, i.code AS institution_code
+         FROM public.users u
+         JOIN public.institutions i ON u.institution_id = i.id
+         WHERE u.is_active = true
+         ORDER BY u.full_name ASC`
+      );
+      res.json(userRes.rows);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
 
-  app.get('/api/timeline', async (req, res) => {
+  // ==========================================================================
+  // 2. BOOTSTRAP & CATALOG ENDPOINTS (Reference Data)
+  // ==========================================================================
+
+  // Healthcheck
+  app.get('/api/health', async (_req: Request, res: Response) => {
     try {
-      const actorUser = (req as any).actorUser as User | undefined;
-      const timeline = await dbService.getAllTimelineEvents(actorUser);
-      res.json(timeline);
+      await pool.query('SELECT 1');
+      res.json({ status: 'ok', timestamp: new Date().toISOString() });
+    } catch (err: any) {
+      res.status(500).json({ status: 'error', message: err.message });
+    }
+  });
+
+  // Fetch current user profile + reference catalogs (Institutions, Tiers, Active Forms)
+  app.get('/api/bootstrap', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const data = await withRlsContext(req.entraOid!, async (client) => {
+        const [userRes, instRes, tiersRes, formsRes, policiesRes] = await Promise.all([
+          client.query(
+            `SELECT u.*, i.name AS institution_name, i.code AS institution_code
+             FROM public.users u
+             JOIN public.institutions i ON u.institution_id = i.id
+             WHERE u.entra_oid = $1 AND u.is_active = true`,
+            [req.entraOid]
+          ),
+          client.query(`SELECT * FROM public.institutions WHERE is_active = true ORDER BY name`),
+          client.query(`SELECT * FROM public.equipment_tiers WHERE is_active = true ORDER BY price_zmw ASC`),
+          client.query(`SELECT * FROM public.form_definitions WHERE is_active = true ORDER BY department, title`),
+          client.query(`SELECT * FROM public.policy_versions WHERE is_active = true ORDER BY effective_date DESC`),
+        ]);
+
+        return {
+          currentUser: userRes.rows[0] || null,
+          institutions: instRes.rows,
+          equipmentTiers: tiersRes.rows,
+          formDefinitions: formsRes.rows,
+          policies: policiesRes.rows,
+        };
+      });
+
+      if (!data.currentUser) {
+        return res.status(403).json({ error: 'User profile not provisioned in Educore database.' });
+      }
+
+      res.json(data);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
 
-  // GET /api/applications (RLS-enforced based on x-user-id)
-  app.get('/api/applications', async (req, res) => {
+  // List all 14 form definitions and their dynamic approval pipelines
+  app.get('/api/forms', requireAuth, async (req: Request, res: Response) => {
     try {
-      const actorUser = (req as any).actorUser as User | undefined;
-      const applications = await dbService.getApplications(actorUser);
+      const forms = await getFormDefinitions(req.entraOid!);
+      res.json(forms);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ==========================================================================
+  // 3. UNIFIED WORKFLOW ENGINE ROUTES (Handles all 14 Forms)
+  // ==========================================================================
+
+  // Query applications queue (auto-filtered by Postgres RLS based on role & school)
+  app.get('/api/applications', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { formCode, department, status, awaitingMyRoleOnly } = req.query;
+      const applications = await getApplicationsQueue(req.entraOid!, {
+        formCode: formCode as FormCode | undefined,
+        department: department as string | undefined,
+        status: status as LifecycleStatus | undefined,
+        awaitingMyRoleOnly: awaitingMyRoleOnly === 'true',
+      });
       res.json(applications);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      res.status(400).json({ error: err.message });
     }
   });
 
-  // GET /api/applications/:id
-  app.get('/api/applications/:id', async (req, res) => {
+  // Get single application with full approval chain and audit timeline
+  app.get('/api/applications/:id', requireAuth, async (req: Request, res: Response) => {
     try {
-      const actorUser = (req as any).actorUser as User | undefined;
-      const appRecord = await dbService.getApplicationById(req.params.id, actorUser);
-      if (!appRecord) {
-        return res.status(404).json({ error: 'Application not found or RLS access denied.' });
-      }
-      res.json(appRecord);
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
-  });
+      const result = await withRlsContext(req.entraOid!, async (client) => {
+        const appRes = await client.query(
+          `SELECT a.*, fd.code AS form_code, fd.title AS form_title, fd.department,
+                  u.full_name AS applicant_name, u.employee_number, u.email AS applicant_email,
+                  i.name AS institution_name
+           FROM public.applications a
+           JOIN public.form_definitions fd ON a.form_definition_id = fd.id
+           JOIN public.users u ON a.applicant_id = u.id
+           JOIN public.institutions i ON a.institution_id = i.id
+           WHERE a.id = $1`,
+          [req.params.id]
+        );
 
-  // GET /api/applications/:id/timeline
-  app.get('/api/applications/:id/timeline', async (req, res) => {
-    try {
-      const actorUser = (req as any).actorUser as User | undefined;
-      const timeline = await dbService.getTimelineForApplication(req.params.id, actorUser);
-      res.json(timeline);
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
-  });
+        if (appRes.rowCount === 0) return null;
 
-  // POST /api/applications (Part 1 submission)
-  app.post('/api/applications', async (req, res) => {
-    try {
-      const actorUser = (req as any).actorUser as User | undefined;
-      if (!actorUser) {
-        return res.status(401).json({ error: 'Unauthorized: missing x-user-id header.' });
-      }
+        const [approvalsRes, timelineRes] = await Promise.all([
+          client.query(
+            `SELECT * FROM public.application_approvals WHERE application_id = $1 ORDER BY step_order ASC`,
+            [req.params.id]
+          ),
+          client.query(
+            `SELECT * FROM public.application_timeline_events WHERE application_id = $1 ORDER BY created_at ASC`,
+            [req.params.id]
+          ),
+        ]);
 
-      const clientIp = req.headers['x-forwarded-for']?.toString() || req.socket.remoteAddress;
-      const result = await dbService.submitPart1(actorUser, {
-        tier: req.body.tier,
-        repaymentPeriod: req.body.repaymentPeriod,
-        estimatedMonthlyAmount: req.body.estimatedMonthlyAmount,
-        termsAccepted: req.body.termsAccepted,
-        ipAddress: clientIp,
-        userAgent: req.headers['user-agent'],
+        return {
+          ...appRes.rows[0],
+          approvals: approvalsRes.rows,
+          timeline: timelineRes.rows,
+        };
       });
 
-      if (!result.success) {
-        return res.status(400).json({ error: result.error });
+      if (!result) {
+        return res.status(404).json({ error: 'Application not found or access denied by RLS.' });
       }
-
-      res.status(201).json(result.application);
+      res.json(result);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      res.status(400).json({ error: err.message });
     }
   });
 
-  // POST /api/applications/:id/endorse (Part 2 Head Teacher review)
-  app.post('/api/applications/:id/endorse', async (req, res) => {
+  // Submit or save a draft for ANY of the 14 forms
+  app.post('/api/applications', requireAuth, async (req: Request, res: Response) => {
     try {
-      const actorUser = (req as any).actorUser as User | undefined;
-      if (!actorUser) {
-        return res.status(401).json({ error: 'Unauthorized: missing x-user-id header.' });
+      const {
+        formCode,
+        submitImmediately = true,
+        policyVersionId,
+        termsAccepted,
+        digitalSignature,
+        payload,
+      } = req.body;
+
+      if (!formCode || !payload || typeof payload !== 'object') {
+        return res.status(400).json({ error: 'formCode and payload object are required.' });
       }
 
-      const { comments, actionType } = req.body;
-      const result = await dbService.endorsePart2(
-        actorUser,
+      const created = await createApplication({
+        entraOid: req.entraOid!,
+        formCode: formCode as FormCode,
+        submitImmediately: Boolean(submitImmediately),
+        policyVersionId,
+        termsAccepted: Boolean(termsAccepted),
+        ipAddress: req.ip || null,
+        userAgent: req.headers['user-agent'] || null,
+        digitalSignature,
+        payload,
+      });
+
+      res.status(201).json(created);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // Single unified sign-off endpoint for ALL roles (GM, HR, IT, Finance, Logistics, Line Manager)
+  app.post('/api/applications/:id/decision', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { decision, comments, digitalSignature, checklistData, stepMetadata } = req.body;
+
+      if (!['APPROVED', 'REJECTED', 'REVISION_REQUESTED'].includes(decision)) {
+        return res.status(400).json({
+          error: 'decision must be APPROVED, REJECTED, or REVISION_REQUESTED.',
+        });
+      }
+
+      const updated = await processApprovalStep({
+        entraOid: req.entraOid!,
+        applicationId: req.params.id,
+        decision,
+        comments,
+        digitalSignature,
+        checklistData,
+        stepMetadata,
+      });
+
+      res.json(updated);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // Applicant withdrawal route
+  app.post('/api/applications/:id/withdraw', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const updated = await withRlsContext(req.entraOid!, async (client) => {
+        const resUpdate = await client.query(
+          `UPDATE public.applications
+           SET status = 'CLOSED'::public.lifecycle_status,
+               current_step_order = NULL,
+               current_approver_role = NULL,
+               updated_at = NOW()
+           WHERE id = $1
+             AND status IN ('DRAFT', 'IN_REVIEW', 'REVISION_REQUIRED')
+           RETURNING *`,
+          [req.params.id]
+        );
+        if (resUpdate.rowCount === 0) {
+          throw new Error('Cannot withdraw application (not found, not yours, or already finalized).');
+        }
+        return resUpdate.rows[0];
+      });
+
+      res.json(updated);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // ==========================================================================
+  // 4. LEGACY ICT PURCHASE ROUTES (Keeps existing Frontend Modals alive)
+  // ==========================================================================
+
+  app.get('/api/legacy/ict-applications', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const rows = await getLegacyPurchaseApplications(req.entraOid!);
+      res.json(rows);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/legacy/ict-applications/:id/gm-endorse', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { decision, comments } = req.body;
+      const updated = await endorseIctApplicationByGM(req.entraOid!, req.params.id, decision, comments);
+      res.json(updated);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/legacy/ict-applications/:id/hr-clearance', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { decision, comments, vettingChecklist } = req.body;
+      const updated = await clearIctApplicationByHR(
+        req.entraOid!,
         req.params.id,
+        decision,
         comments,
-        actionType || 'ENDORSE'
+        vettingChecklist
       );
-
-      if (!result.success) {
-        return res.status(400).json({ error: result.error });
-      }
-
-      res.json(result.application);
+      res.json(updated);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      res.status(400).json({ error: err.message });
     }
   });
 
-  // POST /api/applications/:id/clearance (Part 3 HR Review)
-  app.post('/api/applications/:id/clearance', async (req, res) => {
+  app.post('/api/legacy/ict-applications/:id/it-signoff', requireAuth, async (req: Request, res: Response) => {
     try {
-      const actorUser = (req as any).actorUser as User | undefined;
-      if (!actorUser) {
-        return res.status(401).json({ error: 'Unauthorized: missing x-user-id header.' });
-      }
-
-      const { checklist, comments, isRejecting } = req.body;
-      const result = await dbService.clearPart3(actorUser, req.params.id, {
-        checklist,
+      const { decision, assetSerialNumber, deductedMonthlyAmountZmw, deductionStartDate, deductionEndDate, comments } =
+        req.body;
+      const updated = await signOffIctApplicationByIT(req.entraOid!, req.params.id, decision, {
+        assetSerialNumber,
+        deductedMonthlyAmountZmw,
+        deductionStartDate,
+        deductionEndDate,
         comments,
-        isRejecting: Boolean(isRejecting),
       });
-
-      if (!result.success) {
-        return res.status(400).json({ error: result.error });
-      }
-
-      res.json(result.application);
+      res.json(updated);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      res.status(400).json({ error: err.message });
     }
   });
 
-  // POST /api/applications/:id/signoff (Part 4 IT Finalization)
-  app.post('/api/applications/:id/signoff', async (req, res) => {
-    try {
-      const actorUser = (req as any).actorUser as User | undefined;
-      if (!actorUser) {
-        return res.status(401).json({ error: 'Unauthorized: missing x-user-id header.' });
-      }
-
-      const { serialNumber, monthlyAmount, startDate, endDate, comments, isRejecting } = req.body;
-      const result = await dbService.signoffPart4(actorUser, req.params.id, {
-        serialNumber,
-        monthlyAmount,
-        startDate,
-        endDate,
-        comments,
-        isRejecting: Boolean(isRejecting),
-      });
-
-      if (!result.success) {
-        return res.status(400).json({ error: result.error });
-      }
-
-      res.json(result.application);
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  // POST /api/applications/:id/withdraw
-  app.post('/api/applications/:id/withdraw', async (req, res) => {
-    try {
-      const actorUser = (req as any).actorUser as User | undefined;
-      if (!actorUser) {
-        return res.status(401).json({ error: 'Unauthorized: missing x-user-id header.' });
-      }
-
-      const result = await dbService.withdrawApplication(actorUser, req.params.id);
-      if (!result.success) {
-        return res.status(400).json({ error: result.error });
-      }
-
-      res.json({ success: true });
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  // POST /api/database/reset
-  app.post('/api/database/reset', async (req, res) => {
-    try {
-      const resetData = await dbService.resetDatabase();
-      res.json({ success: true, message: 'Database reset to initial seed benchmark state.', resetData });
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
-  });
-
-  // Mount Vite or static files
+  // ==========================================================================
+  // 5. VITE DEV SERVER / STATIC PRODUCTION BUNDLE
+  // ==========================================================================
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -516,18 +624,22 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    app.use(express.static(path.resolve(__dirname, 'dist')));
-    app.get('*', (req, res) => {
-      res.sendFile(path.resolve(__dirname, 'dist', 'index.html'));
+    const distPath = path.resolve(__dirname, 'dist');
+    app.use(express.static(distPath));
+    app.get('*', (_req, res) => {
+      res.sendFile(path.join(distPath, 'index.html'));
     });
   }
 
-  app.listen(port, '0.0.0.0', () => {
-    console.log(`Educore Provision server active on http://0.0.0.0:${port}`);
-  });
+  return app;
 }
 
-startServer().catch((err) => {
-  console.error('Failed to start Educore Provision server:', err);
-  process.exitCode = 1;
-});
+// Only bind to port when executed directly (allows Vitest/Supertest to import createApp)
+if (process.env.NODE_ENV !== 'test') {
+  const PORT = Number(process.env.PORT) || 3000;
+  createApp().then((app) => {
+    app.listen(PORT, '0.0.0.0', () => {
+      console.log(`[Educore Provision] Workflow Engine running on http://localhost:${PORT}`);
+    });
+  });
+}
