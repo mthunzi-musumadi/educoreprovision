@@ -69,13 +69,16 @@ export const HRClearanceModal: React.FC<HRClearanceModalProps> = ({ application,
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
-      <div className="bg-white rounded-xl shadow-xl border border-slate-200 max-w-2xl w-full my-6 flex flex-col overflow-hidden">
+    <div className="fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4 overflow-y-auto">
+      <div
+        className="bg-white border border-slate-200 max-w-2xl w-full my-6 flex flex-col overflow-hidden shadow-[0_8px_40px_rgba(0,0,0,0.15)]"
+        style={{ borderRadius: 0 }}
+      >
         {/* Header */}
-        <div className="px-6 py-4 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
+        <div className="px-6 py-4 border-b border-slate-200 bg-white flex items-center justify-between">
           <div>
-            <h2 className="text-base font-bold text-slate-900">
-              Part 3: Central HR Review & Debt Clearance
+            <h2 className="text-sm font-bold text-slate-900 uppercase tracking-tight">
+              Part 3: Central HR Review &amp; Debt Clearance
             </h2>
             <div className="text-xs text-slate-500 mt-0.5">
               Reference: <span className="font-mono font-medium text-slate-700">{application.referenceNumber}</span> · {school?.name}
@@ -83,7 +86,7 @@ export const HRClearanceModal: React.FC<HRClearanceModalProps> = ({ application,
           </div>
           <button
             onClick={onClose}
-            className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg transition-colors cursor-pointer"
+            className="text-slate-400 hover:text-slate-600 p-1.5 transition-colors cursor-pointer"
           >
             <X className="w-5 h-5" />
           </button>
@@ -92,15 +95,21 @@ export const HRClearanceModal: React.FC<HRClearanceModalProps> = ({ application,
         {/* Content */}
         <div className="p-6 space-y-5 overflow-y-auto max-h-[75vh]">
           {error && (
-            <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-800">
+            <div
+              className="p-3 border-l-4 border-red-500 bg-red-50 border border-red-200 text-xs text-red-800"
+              style={{ borderRadius: 0 }}
+            >
               {error}
             </div>
           )}
 
           {/* Dossier: Part 1 and Part 2 Endorsement Notes */}
-          <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 space-y-3">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500">
-              Application Context & Endorsement
+          <div
+            className="bg-slate-50 border border-slate-200 p-4 space-y-3"
+            style={{ borderRadius: 0 }}
+          >
+            <h3 className="text-[10px] font-mono font-bold uppercase tracking-widest text-slate-400">
+              Application Context &amp; Endorsement
             </h3>
             <div className="grid grid-cols-2 gap-3 text-xs">
               <div>
@@ -108,7 +117,7 @@ export const HRClearanceModal: React.FC<HRClearanceModalProps> = ({ application,
                 <span className="font-semibold text-slate-900">{applicant?.fullName}</span>
               </div>
               <div>
-                <span className="text-slate-400 block text-[11px]">Employee ID & School:</span>
+                <span className="text-slate-400 block text-[11px]">Employee ID &amp; School:</span>
                 <span className="font-mono text-slate-900">{applicant?.employeeNumber} ({school?.name})</span>
               </div>
               <div>
@@ -135,20 +144,23 @@ export const HRClearanceModal: React.FC<HRClearanceModalProps> = ({ application,
           {/* Statutory Vetting Checklist */}
           <div className="space-y-3">
             <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
-              Statutory HR & Payroll Clearance Checklist
+              Statutory HR &amp; Payroll Clearance Checklist
             </h3>
 
             <div className="space-y-2">
-              <label className="flex items-center gap-3 p-3 bg-white border border-slate-200 rounded-lg cursor-pointer hover:bg-slate-50/70 transition-colors">
+              <label
+                className="flex items-start gap-3 p-3 bg-white border border-slate-200 cursor-pointer hover:border-slate-300 hover:bg-slate-50/30 transition-colors"
+                style={{ borderRadius: 0 }}
+              >
                 <input
                   type="checkbox"
                   checked={probationCleared}
                   onChange={(e) => setProbationCleared(e.target.checked)}
-                  className="w-4 h-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500 cursor-pointer"
+                  className="mt-0.5 h-4 w-4 border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer accent-emerald-600"
                 />
                 <div className="text-xs">
                   <span className="font-semibold text-slate-900 block">
-                    1. Employment Contract & Probation Cleared
+                    1. Employment Contract &amp; Probation Cleared
                   </span>
                   <span className="text-slate-500 text-[11px]">
                     Applicant has concluded the probationary window and holds an active Educore employment contract.
@@ -156,12 +168,15 @@ export const HRClearanceModal: React.FC<HRClearanceModalProps> = ({ application,
                 </div>
               </label>
 
-              <label className="flex items-center gap-3 p-3 bg-white border border-slate-200 rounded-lg cursor-pointer hover:bg-slate-50/70 transition-colors">
+              <label
+                className="flex items-start gap-3 p-3 bg-white border border-slate-200 cursor-pointer hover:border-slate-300 hover:bg-slate-50/30 transition-colors"
+                style={{ borderRadius: 0 }}
+              >
                 <input
                   type="checkbox"
                   checked={zeroSalaryAdvances}
                   onChange={(e) => setZeroSalaryAdvances(e.target.checked)}
-                  className="w-4 h-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500 cursor-pointer"
+                  className="mt-0.5 h-4 w-4 border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer accent-emerald-600"
                 />
                 <div className="text-xs">
                   <span className="font-semibold text-slate-900 block">
@@ -173,19 +188,22 @@ export const HRClearanceModal: React.FC<HRClearanceModalProps> = ({ application,
                 </div>
               </label>
 
-              <label className="flex items-center gap-3 p-3 bg-white border border-slate-200 rounded-lg cursor-pointer hover:bg-slate-50/70 transition-colors">
+              <label
+                className="flex items-start gap-3 p-3 bg-white border border-slate-200 cursor-pointer hover:border-slate-300 hover:bg-slate-50/30 transition-colors"
+                style={{ borderRadius: 0 }}
+              >
                 <input
                   type="checkbox"
                   checked={debtRatioCleared}
                   onChange={(e) => setDebtRatioCleared(e.target.checked)}
-                  className="w-4 h-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500 cursor-pointer"
+                  className="mt-0.5 h-4 w-4 border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer accent-emerald-600"
                 />
                 <div className="text-xs">
                   <span className="font-semibold text-slate-900 block">
                     3. Net Debt Ratio within Educore 33% Ceiling
                   </span>
                   <span className="text-slate-500 text-[11px]">
-                    Total deductions including SACCO, health scheme, and this laptop purchase remain $\le 33\%$ of net gross salary.
+                    Total deductions including SACCO, health scheme, and this laptop purchase remain ≤ 33% of net gross salary.
                   </span>
                 </div>
               </label>
@@ -206,13 +224,14 @@ export const HRClearanceModal: React.FC<HRClearanceModalProps> = ({ application,
                   : 'Optional compliance or payroll audit notes...'
               }
               rows={2}
-              className="w-full p-2.5 text-xs border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+              className="w-full p-2.5 text-xs border border-slate-300 bg-white focus:outline-none focus:border-slate-500 focus:ring-1 focus:ring-slate-500"
+              style={{ borderRadius: 0 }}
             />
           </div>
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-4 border-t border-slate-200 bg-slate-50 flex items-center justify-between">
+        <div className="px-6 py-4 border-t border-slate-200 bg-white flex items-center justify-between">
           <button
             type="button"
             onClick={() => setIsRejecting(!isRejecting)}
@@ -234,11 +253,12 @@ export const HRClearanceModal: React.FC<HRClearanceModalProps> = ({ application,
             <button
               type="button"
               onClick={handleAction}
-              className={`px-4 py-2 text-xs font-semibold text-white rounded-lg shadow-xs flex items-center gap-1.5 transition-colors cursor-pointer ${
+              className={`px-5 py-2.5 text-xs font-bold text-white shadow-sm flex items-center gap-1.5 transition-colors cursor-pointer ${
                 isRejecting
                   ? 'bg-red-600 hover:bg-red-700'
                   : 'bg-emerald-700 hover:bg-emerald-800'
               }`}
+              style={{ borderRadius: 0 }}
             >
               <Check className="w-4 h-4" />
               <span>{isRejecting ? 'Confirm Rejection' : 'Approve Clearance & Route to IT'}</span>

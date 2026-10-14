@@ -98,13 +98,16 @@ export const ITSignoffModal: React.FC<ITSignoffModalProps> = ({ application, onC
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
-      <div className="bg-white rounded-xl shadow-xl border border-slate-200 max-w-2xl w-full my-6 flex flex-col overflow-hidden">
+    <div className="fixed inset-0 z-50 bg-slate-900/50 flex items-center justify-center p-4 overflow-y-auto">
+      <div
+        className="bg-white border border-slate-200 max-w-2xl w-full my-6 flex flex-col overflow-hidden shadow-[0_8px_40px_rgba(0,0,0,0.15)]"
+        style={{ borderRadius: 0 }}
+      >
         {/* Header */}
-        <div className="px-6 py-4 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
+        <div className="px-6 py-4 border-b border-slate-200 bg-white flex items-center justify-between">
           <div>
-            <h2 className="text-base font-bold text-slate-900">
-              Part 4: Central ICT Equipment Allocation & Deduction Schedule
+            <h2 className="text-sm font-bold text-slate-900 uppercase tracking-tight">
+              Part 4: Central ICT Equipment Allocation &amp; Deduction Schedule
             </h2>
             <div className="text-xs text-slate-500 mt-0.5">
               Reference: <span className="font-mono font-medium text-slate-700">{application.referenceNumber}</span> · {school?.name}
@@ -112,7 +115,8 @@ export const ITSignoffModal: React.FC<ITSignoffModalProps> = ({ application, onC
           </div>
           <button
             onClick={onClose}
-            className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg transition-colors cursor-pointer"
+            className="text-slate-400 hover:text-slate-600 p-1.5 transition-colors cursor-pointer"
+            style={{ borderRadius: 0 }}
           >
             <X className="w-5 h-5" />
           </button>
@@ -121,30 +125,36 @@ export const ITSignoffModal: React.FC<ITSignoffModalProps> = ({ application, onC
         {/* Content */}
         <div className="p-6 space-y-5 overflow-y-auto max-h-[75vh]">
           {error && (
-            <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-800">
+            <div
+              className="p-3 border-l-4 border-red-500 bg-red-50 border border-red-200 text-xs text-red-800"
+              style={{ borderRadius: 0 }}
+            >
               {error}
             </div>
           )}
 
           {/* Dossier: Read-Only Parts 1, 2, and 3 */}
-          <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 space-y-3">
+          <div
+            className="bg-slate-50 border border-slate-200 p-4 space-y-3"
+            style={{ borderRadius: 0 }}
+          >
             <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500">
               Clearance Dossier (Parts 1–3 Complete)
             </h3>
             <div className="grid grid-cols-2 gap-3 text-xs">
-              <div>
+              <div style={{ borderRadius: 0 }}>
                 <span className="text-slate-400 block text-[11px]">Staff Recipient:</span>
                 <span className="font-semibold text-slate-900">{applicant?.fullName} ({applicant?.employeeNumber})</span>
               </div>
-              <div>
+              <div style={{ borderRadius: 0 }}>
                 <span className="text-slate-400 block text-[11px]">Destination Campus:</span>
                 <span className="text-slate-900">{school?.name}</span>
               </div>
-              <div>
+              <div style={{ borderRadius: 0 }}>
                 <span className="text-slate-400 block text-[11px]">Requested Hardware Tier:</span>
                 <span className="font-semibold text-slate-900">{laptopConfig.title}</span>
               </div>
-              <div>
+              <div style={{ borderRadius: 0 }}>
                 <span className="text-slate-400 block text-[11px]">Plan Term:</span>
                 <span className="font-semibold text-slate-900">
                   {durationMonths} Months (Total ZMW {laptopConfig.priceZmw.toLocaleString()})
@@ -153,11 +163,11 @@ export const ITSignoffModal: React.FC<ITSignoffModalProps> = ({ application, onC
             </div>
 
             <div className="pt-2 border-t border-slate-200 grid grid-cols-2 gap-2 text-[11px] text-slate-600">
-              <div>
+              <div style={{ borderRadius: 0 }}>
                 <span className="text-slate-400 block">Part 2 (GM Endorsement):</span>
                 <span className="text-emerald-800 font-medium">{application.gmReviewerName || 'Endorsed'}</span>
               </div>
-              <div>
+              <div style={{ borderRadius: 0 }}>
                 <span className="text-slate-400 block">Part 3 (HR Clearance):</span>
                 <span className="text-emerald-800 font-medium">
                   {application.hrReviewerName || 'Cleared'} (Debt &lt; 33% OK)
@@ -177,7 +187,8 @@ export const ITSignoffModal: React.FC<ITSignoffModalProps> = ({ application, onC
                 value={serialNumber}
                 onChange={(e) => setSerialNumber(e.target.value)}
                 placeholder="e.g. DELL-LAT-5540-0891"
-                className="w-full p-2.5 text-xs font-mono font-semibold border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+                className="w-full p-2.5 text-xs border border-slate-300 bg-white focus:outline-none focus:border-slate-500 focus:ring-1 focus:ring-slate-500"
+                style={{ borderRadius: 0 }}
               />
               <span className="text-[10px] text-slate-500 mt-0.5 block">
                 Unique asset tag engraved or registered in Educore Device Management.
@@ -194,7 +205,8 @@ export const ITSignoffModal: React.FC<ITSignoffModalProps> = ({ application, onC
                   step="0.01"
                   value={monthlyAmount}
                   onChange={(e) => setMonthlyAmount(parseFloat(e.target.value) || 0)}
-                  className="w-full p-2.5 text-xs font-mono font-bold text-emerald-800 border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500"
+                  className="w-full p-2.5 text-xs border border-slate-300 bg-white focus:outline-none focus:border-slate-500 focus:ring-1 focus:ring-slate-500"
+                  style={{ borderRadius: 0 }}
                 />
               </div>
 
@@ -206,7 +218,8 @@ export const ITSignoffModal: React.FC<ITSignoffModalProps> = ({ application, onC
                   type="month"
                   value={startDate}
                   onChange={(e) => setStartDate(e.target.value)}
-                  className="w-full p-2.5 text-xs font-mono border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500"
+                  className="w-full p-2.5 text-xs border border-slate-300 bg-white focus:outline-none focus:border-slate-500 focus:ring-1 focus:ring-slate-500"
+                  style={{ borderRadius: 0 }}
                 />
               </div>
 
@@ -218,14 +231,15 @@ export const ITSignoffModal: React.FC<ITSignoffModalProps> = ({ application, onC
                   type="month"
                   value={endDate}
                   onChange={(e) => setEndDate(e.target.value)}
-                  className="w-full p-2.5 text-xs font-mono border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500"
+                  className="w-full p-2.5 text-xs border border-slate-300 bg-white focus:outline-none focus:border-slate-500 focus:ring-1 focus:ring-slate-500"
+                  style={{ borderRadius: 0 }}
                 />
               </div>
             </div>
 
             <div>
               <label className="block text-xs font-semibold text-slate-800 mb-1">
-                ICT Handover & Warranty Notes {isRejecting && <span className="text-red-500">*</span>}
+                ICT Handover &amp; Warranty Notes {isRejecting && <span className="text-red-500">*</span>}
               </label>
               <textarea
                 value={comments}
@@ -236,14 +250,15 @@ export const ITSignoffModal: React.FC<ITSignoffModalProps> = ({ application, onC
                     : 'Notes on imaging, warranty card, campus handover delivery...'
                 }
                 rows={2}
-                className="w-full p-2.5 text-xs border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+                className="w-full p-2.5 text-xs border border-slate-300 bg-white focus:outline-none focus:border-slate-500 focus:ring-1 focus:ring-slate-500"
+                style={{ borderRadius: 0 }}
               />
             </div>
           </div>
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-4 border-t border-slate-200 bg-slate-50 flex items-center justify-between">
+        <div className="px-6 py-4 border-t border-slate-200 bg-white flex items-center justify-between">
           <button
             type="button"
             onClick={() => setIsRejecting(!isRejecting)}
@@ -265,11 +280,12 @@ export const ITSignoffModal: React.FC<ITSignoffModalProps> = ({ application, onC
             <button
               type="button"
               onClick={handleAction}
-              className={`px-4 py-2 text-xs font-semibold text-white rounded-lg shadow-xs flex items-center gap-1.5 transition-colors cursor-pointer ${
+              className={`px-5 py-2.5 text-xs font-bold text-white shadow-sm flex items-center gap-1.5 cursor-pointer ${
                 isRejecting
                   ? 'bg-red-600 hover:bg-red-700'
                   : 'bg-emerald-700 hover:bg-emerald-800'
               }`}
+              style={{ borderRadius: 0 }}
             >
               <FileCheck className="w-4 h-4" />
               <span>{isRejecting ? 'Confirm IT Rejection' : 'Finalize, Sign & Close Request'}</span>

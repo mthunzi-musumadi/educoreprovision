@@ -42,7 +42,7 @@ export const Header: React.FC<HeaderProps> = ({ currentTab, setCurrentTab }) => 
     <header className="w-full bg-white border-b border-slate-200 sticky top-0 z-40">
       {/* 1. Global Persona Switcher Strip (Requirement for interactive multi-role testing) */}
       <div className="bg-slate-900 text-slate-200 px-4 py-2 text-xs border-b border-slate-800">
-        <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-3">
+        <div className="w-full px-4 sm:px-8 lg:px-10 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <span className="text-slate-400 font-medium">Interactive Persona Switcher:</span>
             <div className="flex flex-wrap items-center gap-1.5">
@@ -89,12 +89,12 @@ export const Header: React.FC<HeaderProps> = ({ currentTab, setCurrentTab }) => 
       </div>
 
       {/* 2. Primary Navigation Bar adhering to Top Bar Contract */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div className="w-full px-4 sm:px-8 lg:px-10">
         <div className="flex items-center justify-between gap-8 h-16">
           {/* Zone 1: Brand Wordmark */}
           <div className="flex items-center gap-3 shrink-0">
             <div className="w-9 h-9 rounded-lg bg-emerald-700 flex items-center justify-center text-white font-bold text-base shadow-xs">
-              EP
+              E
             </div>
             <div className="flex flex-col">
               <span className="text-base font-bold tracking-tight text-slate-900 whitespace-nowrap">
@@ -110,6 +110,19 @@ export const Header: React.FC<HeaderProps> = ({ currentTab, setCurrentTab }) => 
 
           {/* Zone 2: Navigation Links (Contextual to role or global testing) */}
           <nav className="hidden md:flex items-center gap-1 text-sm font-medium text-slate-600">
+            {currentUser.role !== 'APPLICANT' && (
+              <button
+                onClick={() => setCurrentTab('staff-applicants')}
+                className={`px-3 py-1.5 rounded-md transition-colors whitespace-nowrap cursor-pointer ${
+                  currentTab === 'staff-applicants'
+                    ? 'bg-slate-100 text-slate-900 font-semibold'
+                    : 'hover:text-slate-900 hover:bg-slate-50'
+                }`}
+              >
+                Staff Applicants
+              </button>
+            )}
+
             <button
               onClick={() => setCurrentTab('my-requests')}
               className={`px-3 py-1.5 rounded-md transition-colors whitespace-nowrap cursor-pointer ${
@@ -118,7 +131,7 @@ export const Header: React.FC<HeaderProps> = ({ currentTab, setCurrentTab }) => 
                   : 'hover:text-slate-900 hover:bg-slate-50'
               }`}
             >
-              {currentUser.role === 'APPLICANT' ? 'My Applications' : 'Applicant Portal'}
+              My Applications
             </button>
 
             {(currentUser.role === 'HEAD_TEACHER' || currentUser.role === 'SUPER_ADMIN') && (

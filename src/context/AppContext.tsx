@@ -18,6 +18,14 @@ import {
   VERBATIM_LEGAL_POLICY,
 } from '../data/mockData';
 
+export interface MicrosoftAuthConfig {
+  configured: boolean;
+  tenantId: string;
+  clientId: string;
+  redirectUri: string;
+  provider: string;
+}
+
 interface AppContextType {
   currentUser: User;
   users: User[];
@@ -30,24 +38,32 @@ interface AppContextType {
   getTimelineForApplication: (applicationId: string) => ApplicationTimelineEvent[];
   refreshData: () => Promise<void>;
   
+  // Database & Microsoft OIDC Live Status
+  isDbConnected: boolean;
+  lastDbSyncTime: Date | null;
+  authConfig: MicrosoftAuthConfig | null;
+  ssoLogin: (userId: string) => Promise<void>;
+  loginWithMicrosoft: () => void;
+  logout: () => Promise<void>;
+  
   // Workflow Actions
   submitPart1: (params: {
     tier: LaptopTier;
     repaymentPeriod: RepaymentPlan;
     estimatedMonthlyAmount: number;
     termsAccepted: boolean;
-  }) => { success: boolean; application?: PurchaseApplication; error?: string };
+  }) => Promise<{ success: boolean; application?: PurchaseApplication; error?: string }>;
   
-  endorsePart2: (applicationId: string, comments: string) => void;
-  requestRevisionPart2: (applicationId: string, comments: string) => void;
-  rejectPart2: (applicationId: string, comments: string) => void;
+  endorsePart2: (applicationId: string, comments: string) => Promise<void>;
+  requestRevisionPart2: (applicationId: string, comments: string) => Promise<void>;
+  rejectPart2: (applicationId: string, comments: string) => Promise<void>;
   
   clearPart3: (
     applicationId: string,
     checklist: HRVettingChecklist,
     comments: string
-  ) => void;
-  rejectPart3: (applicationId: string, comments: string) => void;
+  ) => Promise<void>;
+  rejectPart3: (applicationId: string, comments: string) => Promise<void>;
   
   signoffPart4: (params: {
     applicationId: string;
@@ -56,11 +72,11 @@ interface AppContextType {
     startDate: string;
     endDate: string;
     comments: string;
-  }) => void;
-  rejectPart4: (applicationId: string, comments: string) => void;
+  }) => Promise<void>;
+  rejectPart4: (applicationId: string, comments: string) => Promise<void>;
   
-  withdrawApplication: (applicationId: string) => void;
-  resetDemoData: () => void;
+  withdrawApplication: (applicationId: string) => Promise<void>;
+  resetDemoData: () => Promise<void>;
   
   // UI Helpers
   activeModal: {
@@ -73,6 +89,7 @@ interface AppContextType {
 
 const STORAGE_KEYS = {
   CURRENT_USER: 'educore_current_user_id',
+  SESSION_TOKEN: 'educore_session_token',
   APPLICATIONS: 'educore_applications_v1',
   TIMELINE: 'educore_timeline_v1',
 };
@@ -84,14 +101,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return localStorage.getItem(STORAGE_KEYS.CURRENT_USER) || MOCK_USERS[0].id;
   });
 
+  const [sessionToken, setSessionToken] = useState<string | null>(() => {
+    return localStorage.getItem(STORAGE_KEYS.SESSION_TOKEN);
+  });
+
   const [applications, setApplications] = useState<PurchaseApplication[]>(() => {
     const saved = localStorage.getItem(STORAGE_KEYS.APPLICATIONS);
     if (saved) {
       try {
         return JSON.parse(saved);
-      } catch (e) {
-        console.error('Failed to parse saved applications', e);
-      }
+      } catch (e) {}
     }
     return INITIAL_APPLICATIONS;
   });
@@ -101,37 +120,104 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (saved) {
       try {
         return JSON.parse(saved);
-      } catch (e) {
-        console.error('Failed to parse saved timeline', e);
-      }
+      } catch (e) {}
     }
     return INITIAL_TIMELINE;
   });
+
+  const [users, setUsers] = useState<User[]>(MOCK_USERS);
+  const [institutions, setInstitutions] = useState<Institution[]>(INSTITUTIONS);
+  const [isDbConnected, setIsDbConnected] = useState<boolean>(true);
+  const [lastDbSyncTime, setLastDbSyncTime] = useState<Date | null>(new Date());
+  const [authConfig, setAuthConfig] = useState<MicrosoftAuthConfig | null>(null);
 
   const [activeModal, setActiveModal] = useState<{
     type: 'NEW_REQUEST' | 'DETAIL' | 'ENDORSE_PART2' | 'CLEAR_PART3' | 'SIGNOFF_PART4' | 'PHYSICAL_FORM' | null;
     applicationId?: string;
   }>({ type: null });
 
-  const currentUser = MOCK_USERS.find((u) => u.id === currentUserId) || MOCK_USERS[0];
+  const currentUser = users.find((u) => u.id === currentUserId) || users[0];
 
-  // Fetch from backend API
+  const getAuthHeaders = useCallback(() => {
+    const headers: Record<string, string> = {
+      'x-user-id': currentUserId,
+    };
+    if (sessionToken) {
+      headers['Authorization'] = `Bearer ${sessionToken}`;
+    }
+    return headers;
+  }, [currentUserId, sessionToken]);
+
+  // Check URL query parameters for SSO callback
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const ssoSuccess = params.get('sso_success');
+    const ssoUserId = params.get('user_id');
+    if (ssoSuccess && ssoUserId) {
+      setCurrentUserId(ssoUserId);
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+  }, []);
+
+  // Fetch Microsoft Auth Config
+  useEffect(() => {
+    fetch('/api/auth/config')
+      .then((r) => r.ok && r.json())
+      .then((data) => {
+        if (data) setAuthConfig(data);
+      })
+      .catch(() => {});
+  }, []);
+
+  // Fetch institutions and users live from PostgreSQL database
+  useEffect(() => {
+    fetch('/api/institutions')
+      .then((r) => r.ok && r.json())
+      .then((data) => {
+        if (Array.isArray(data) && data.length > 0) {
+          setInstitutions(data);
+          setIsDbConnected(true);
+        }
+      })
+      .catch(() => setIsDbConnected(false));
+
+    fetch('/api/users')
+      .then((r) => r.ok && r.json())
+      .then((data) => {
+        if (Array.isArray(data) && data.length > 0) {
+          setUsers(data);
+          setIsDbConnected(true);
+        }
+      })
+      .catch(() => setIsDbConnected(false));
+  }, []);
+
+  // Fetch applications & timeline live from backend database
   const refreshData = useCallback(async () => {
     try {
-      const res = await fetch('/api/applications', {
-        headers: {
-          'x-user-id': currentUserId,
-        },
-      });
+      const headers = getAuthHeaders();
+      const res = await fetch('/api/applications', { headers });
       if (res.ok) {
         const data = await res.json();
         setApplications(data);
         localStorage.setItem(STORAGE_KEYS.APPLICATIONS, JSON.stringify(data));
+        setIsDbConnected(true);
+        setLastDbSyncTime(new Date());
+      }
+
+      // Pre-fetch timeline events under RLS
+      const timelineRes = await fetch('/api/timeline', { headers });
+      if (timelineRes.ok) {
+        const tData = await timelineRes.json();
+        if (Array.isArray(tData)) {
+          setTimelineEvents(tData);
+          localStorage.setItem(STORAGE_KEYS.TIMELINE, JSON.stringify(tData));
+        }
       }
     } catch (e) {
-      // Backend request fallback to local state
+      setIsDbConnected(false);
     }
-  }, [currentUserId]);
+  }, [getAuthHeaders]);
 
   useEffect(() => {
     refreshData();
@@ -143,18 +229,50 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [currentUserId]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.APPLICATIONS, JSON.stringify(applications));
-  }, [applications]);
+    if (sessionToken) {
+      localStorage.setItem(STORAGE_KEYS.SESSION_TOKEN, sessionToken);
+    } else {
+      localStorage.removeItem(STORAGE_KEYS.SESSION_TOKEN);
+    }
+  }, [sessionToken]);
 
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.TIMELINE, JSON.stringify(timelineEvents));
-  }, [timelineEvents]);
+  // SSO Login handler
+  const ssoLogin = async (userId: string) => {
+    try {
+      const res = await fetch('/api/auth/sso-login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.token) {
+          setSessionToken(data.token);
+        }
+        setCurrentUserId(userId);
+        await refreshData();
+      } else {
+        setCurrentUserId(userId);
+      }
+    } catch {
+      setCurrentUserId(userId);
+    }
+  };
+
+  const loginWithMicrosoft = () => {
+    window.location.href = '/api/auth/login';
+  };
+
+  const logout = async () => {
+    try {
+      await fetch('/api/auth/logout', { method: 'POST' });
+    } catch {}
+    setSessionToken(null);
+    setCurrentUserId(users[0]?.id || MOCK_USERS[0].id);
+  };
 
   const switchUser = (userId: string) => {
-    const user = MOCK_USERS.find((u) => u.id === userId);
-    if (user) {
-      setCurrentUserId(user.id);
-    }
+    ssoLogin(userId);
   };
 
   const openModal = (
@@ -168,14 +286,33 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setActiveModal({ type: null });
   };
 
+  // Fetch timeline whenever activeModal has an applicationId
+  useEffect(() => {
+    if (activeModal.applicationId) {
+      fetch(`/api/applications/${activeModal.applicationId}/timeline`, {
+        headers: getAuthHeaders(),
+      })
+        .then((r) => r.ok && r.json())
+        .then((events) => {
+          if (Array.isArray(events) && events.length > 0) {
+            setTimelineEvents((prev) => {
+              const otherEvents = prev.filter((e) => e.applicationId !== activeModal.applicationId);
+              return [...otherEvents, ...events];
+            });
+          }
+        })
+        .catch(() => {});
+    }
+  }, [activeModal.applicationId, getAuthHeaders]);
+
   const resetDemoData = async () => {
     try {
       await fetch('/api/database/reset', { method: 'POST' });
     } catch (e) {}
 
-    setApplications(INITIAL_APPLICATIONS);
+    await refreshData();
     setTimelineEvents(INITIAL_TIMELINE);
-    setCurrentUserId(MOCK_USERS[0].id);
+    setCurrentUserId(users[0]?.id || MOCK_USERS[0].id);
     localStorage.removeItem(STORAGE_KEYS.APPLICATIONS);
     localStorage.removeItem(STORAGE_KEYS.TIMELINE);
     localStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
@@ -227,8 +364,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setTimelineEvents((prev) => [...prev, newEvent]);
   };
 
-  // PART 1: Applicant Submission
-  const submitPart1 = ({
+  // PART 1: Applicant Submission straight to PostgreSQL Database
+  const submitPart1 = async ({
     tier,
     repaymentPeriod,
     estimatedMonthlyAmount,
@@ -247,264 +384,169 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const existingActive = applications.find(
       (app) =>
         app.applicantId === currentUser.id &&
-        ['PENDING_GM_REVIEW', 'PENDING_HR_REVIEW', 'PENDING_IT_SIGNOFF'].includes(app.status)
+        ['PENDING_GM_REVIEW', 'PENDING_HR_REVIEW', 'PENDING_IT_SIGNOFF', 'REVISION_REQUIRED'].includes(app.status)
     );
     if (existingActive) {
+      const msg = existingActive.status === 'REVISION_REQUIRED'
+        ? `You have an application requiring revision (${existingActive.referenceNumber}). Please withdraw it before submitting a new request.`
+        : `You already have an active request in review (${existingActive.referenceNumber}). Only one in-flight application is permitted.`;
       return {
         success: false,
-        error: `You already have an active request in review (${existingActive.referenceNumber}). Only one in-flight application is permitted.`,
+        error: msg,
       };
     }
 
-    const yearStr = new Date().getFullYear().toString();
-    const countThisYear = applications.length + 1;
-    const refNum = `EDC-ICT-${yearStr}-${countThisYear.toString().padStart(4, '0')}`;
-    const appId = `app-${Date.now()}`;
-    const timestamp = new Date().toISOString();
+    try {
+      const res = await fetch('/api/applications', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...getAuthHeaders(),
+        },
+        body: JSON.stringify({
+          tier,
+          repaymentPeriod,
+          estimatedMonthlyAmount,
+          termsAccepted,
+        }),
+      });
 
-    const newApp: PurchaseApplication = {
-      id: appId,
-      referenceNumber: refNum,
-      applicantId: currentUser.id,
-      institutionId: currentUser.institutionId,
-      status: 'PENDING_GM_REVIEW',
-      policyVersionTag: 'v1.0-2026',
-      legalTextSnapshot: VERBATIM_LEGAL_POLICY,
-      termsAccepted: true,
-      termsAcceptedAt: timestamp,
-      applicantIpAddress: '196.220.124.45',
-      applicantUserAgent: navigator.userAgent,
-      requestedLaptopTier: tier,
-      repaymentPeriod,
-      estimatedMonthlyAmountZmw: estimatedMonthlyAmount,
-      applicantSignedAt: timestamp,
-      applicantDigitalSignature: `SIG-${currentUser.fullName.split(' ')[0].toUpperCase()}-${currentUser.id.slice(0, 8)}-${Date.now()}`,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    };
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        return { success: false, error: errData.error || 'Failed to submit application to database.' };
+      }
 
-    setApplications((prev) => [newApp, ...prev]);
-    logTimeline(
-      appId,
-      'SUBMITTED_PART_1',
-      'DRAFT',
-      'PENDING_GM_REVIEW',
-      `Submitted request for ${LAPTOP_CONFIGS[tier].title} (${repaymentPeriod}) with verified legal agreement.`
-    );
+      const createdApp: PurchaseApplication = await res.json();
+      setApplications((prev) => [createdApp, ...prev.filter((a) => a.id !== createdApp.id)]);
 
-    // Async persist to backend API
-    fetch('/api/applications', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-user-id': currentUser.id,
-      },
-      body: JSON.stringify({
-        tier,
-        repaymentPeriod,
-        estimatedMonthlyAmount,
-        termsAccepted,
-      }),
-    }).catch((e) => console.log('API sync', e));
+      logTimeline(
+        createdApp.id,
+        'SUBMITTED_PART_1',
+        'DRAFT',
+        'PENDING_GM_REVIEW',
+        `Submitted request for ${LAPTOP_CONFIGS[tier].title} (${repaymentPeriod}) with verified legal agreement.`
+      );
 
-    return { success: true, application: newApp };
+      await refreshData();
+      return { success: true, application: createdApp };
+    } catch (e: any) {
+      return { success: false, error: e.message || 'Network error communicating with database.' };
+    }
   };
 
-  // PART 2: Head Teacher / GM Endorsement
-  const endorsePart2 = (applicationId: string, comments: string) => {
-    const timestamp = new Date().toISOString();
-    setApplications((prev) =>
-      prev.map((app) => {
-        if (app.id === applicationId) {
-          return {
-            ...app,
-            status: 'PENDING_HR_REVIEW',
-            gmReviewerId: currentUser.id,
-            gmReviewerName: currentUser.fullName,
-            gmComments: comments || 'Endorsed by School Head Teacher / General Manager.',
-            gmSignedAt: timestamp,
-            gmDigitalSignature: `SIG-${currentUser.fullName.split(' ')[0].toUpperCase()}-${currentUser.id.slice(0, 8)}-${Date.now()}`,
-            updatedAt: timestamp,
-          };
-        }
-        return app;
-      })
-    );
+  // PART 2: Head Teacher / GM Endorsement straight to PostgreSQL Database
+  const endorsePart2 = async (applicationId: string, comments: string) => {
+    try {
+      const res = await fetch(`/api/applications/${applicationId}/endorse`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...getAuthHeaders(),
+        },
+        body: JSON.stringify({ comments, actionType: 'ENDORSE' }),
+      });
 
-    logTimeline(
-      applicationId,
-      'ENDORSED_PART_2',
-      'PENDING_GM_REVIEW',
-      'PENDING_HR_REVIEW',
-      comments || 'Endorsed by Campus General Manager / Head Teacher.'
-    );
-
-    fetch(`/api/applications/${applicationId}/endorse`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-user-id': currentUser.id,
-      },
-      body: JSON.stringify({ comments, actionType: 'ENDORSE' }),
-    }).catch((e) => console.log('API sync', e));
+      if (res.ok) {
+        const updatedApp = await res.json();
+        setApplications((prev) => prev.map((a) => (a.id === applicationId ? updatedApp : a)));
+      }
+      await refreshData();
+    } catch (e) {
+      console.error('Endorse Part 2 error:', e);
+    }
   };
 
-  const requestRevisionPart2 = (applicationId: string, comments: string) => {
-    const timestamp = new Date().toISOString();
-    setApplications((prev) =>
-      prev.map((app) => {
-        if (app.id === applicationId) {
-          return {
-            ...app,
-            status: 'REVISION_REQUIRED',
-            gmReviewerId: currentUser.id,
-            gmReviewerName: currentUser.fullName,
-            gmComments: comments,
-            updatedAt: timestamp,
-          };
-        }
-        return app;
-      })
-    );
+  const requestRevisionPart2 = async (applicationId: string, comments: string) => {
+    try {
+      const res = await fetch(`/api/applications/${applicationId}/endorse`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...getAuthHeaders(),
+        },
+        body: JSON.stringify({ comments, actionType: 'REVISION' }),
+      });
 
-    logTimeline(
-      applicationId,
-      'REVISION_REQUESTED',
-      'PENDING_GM_REVIEW',
-      'REVISION_REQUIRED',
-      comments
-    );
-
-    fetch(`/api/applications/${applicationId}/endorse`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-user-id': currentUser.id,
-      },
-      body: JSON.stringify({ comments, actionType: 'REVISION' }),
-    }).catch((e) => console.log('API sync', e));
+      if (res.ok) {
+        const updatedApp = await res.json();
+        setApplications((prev) => prev.map((a) => (a.id === applicationId ? updatedApp : a)));
+      }
+      await refreshData();
+    } catch (e) {
+      console.error('Request revision error:', e);
+    }
   };
 
-  const rejectPart2 = (applicationId: string, comments: string) => {
-    const timestamp = new Date().toISOString();
-    setApplications((prev) =>
-      prev.map((app) => {
-        if (app.id === applicationId) {
-          return {
-            ...app,
-            status: 'REJECTED',
-            gmReviewerId: currentUser.id,
-            gmReviewerName: currentUser.fullName,
-            gmComments: comments,
-            gmSignedAt: timestamp,
-            updatedAt: timestamp,
-          };
-        }
-        return app;
-      })
-    );
+  const rejectPart2 = async (applicationId: string, comments: string) => {
+    try {
+      const res = await fetch(`/api/applications/${applicationId}/endorse`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...getAuthHeaders(),
+        },
+        body: JSON.stringify({ comments, actionType: 'REJECT' }),
+      });
 
-    logTimeline(
-      applicationId,
-      'REJECTED_PART_2',
-      'PENDING_GM_REVIEW',
-      'REJECTED',
-      comments
-    );
-
-    fetch(`/api/applications/${applicationId}/endorse`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-user-id': currentUser.id,
-      },
-      body: JSON.stringify({ comments, actionType: 'REJECT' }),
-    }).catch((e) => console.log('API sync', e));
+      if (res.ok) {
+        const updatedApp = await res.json();
+        setApplications((prev) => prev.map((a) => (a.id === applicationId ? updatedApp : a)));
+      }
+      await refreshData();
+    } catch (e) {
+      console.error('Reject Part 2 error:', e);
+    }
   };
 
-  // PART 3: HR Clearance
-  const clearPart3 = (
+  // PART 3: Central HR Review & Clearance straight to PostgreSQL Database
+  const clearPart3 = async (
     applicationId: string,
     checklist: HRVettingChecklist,
     comments: string
   ) => {
-    const timestamp = new Date().toISOString();
-    setApplications((prev) =>
-      prev.map((app) => {
-        if (app.id === applicationId) {
-          return {
-            ...app,
-            status: 'PENDING_IT_SIGNOFF',
-            hrReviewerId: currentUser.id,
-            hrReviewerName: currentUser.fullName,
-            hrComments: comments || 'Full payroll and employment compliance cleared.',
-            hrChecklist: checklist,
-            hrSignedAt: timestamp,
-            hrDigitalSignature: `SIG-${currentUser.fullName.split(' ')[0].toUpperCase()}-${currentUser.id.slice(0, 8)}-${Date.now()}`,
-            updatedAt: timestamp,
-          };
-        }
-        return app;
-      })
-    );
+    try {
+      const res = await fetch(`/api/applications/${applicationId}/clearance`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...getAuthHeaders(),
+        },
+        body: JSON.stringify({ checklist, comments, isRejecting: false }),
+      });
 
-    logTimeline(
-      applicationId,
-      'CLEARED_PART_3',
-      'PENDING_HR_REVIEW',
-      'PENDING_IT_SIGNOFF',
-      `HR Cleared: Debt ratio under 33% verified, probation cleared. Notes: ${comments || 'None'}`
-    );
-
-    fetch(`/api/applications/${applicationId}/clearance`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-user-id': currentUser.id,
-      },
-      body: JSON.stringify({ checklist, comments, isRejecting: false }),
-    }).catch((e) => console.log('API sync', e));
+      if (res.ok) {
+        const updatedApp = await res.json();
+        setApplications((prev) => prev.map((a) => (a.id === applicationId ? updatedApp : a)));
+      }
+      await refreshData();
+    } catch (e) {
+      console.error('Clear Part 3 error:', e);
+    }
   };
 
-  const rejectPart3 = (applicationId: string, comments: string) => {
-    const timestamp = new Date().toISOString();
-    setApplications((prev) =>
-      prev.map((app) => {
-        if (app.id === applicationId) {
-          return {
-            ...app,
-            status: 'REJECTED',
-            hrReviewerId: currentUser.id,
-            hrReviewerName: currentUser.fullName,
-            hrComments: comments,
-            hrSignedAt: timestamp,
-            updatedAt: timestamp,
-          };
-        }
-        return app;
-      })
-    );
+  const rejectPart3 = async (applicationId: string, comments: string) => {
+    try {
+      const res = await fetch(`/api/applications/${applicationId}/clearance`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...getAuthHeaders(),
+        },
+        body: JSON.stringify({ comments, isRejecting: true }),
+      });
 
-    logTimeline(
-      applicationId,
-      'REJECTED_PART_3',
-      'PENDING_HR_REVIEW',
-      'REJECTED',
-      comments
-    );
-
-    fetch(`/api/applications/${applicationId}/clearance`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-user-id': currentUser.id,
-      },
-      body: JSON.stringify({ comments, isRejecting: true }),
-    }).catch((e) => console.log('API sync', e));
+      if (res.ok) {
+        const updatedApp = await res.json();
+        setApplications((prev) => prev.map((a) => (a.id === applicationId ? updatedApp : a)));
+      }
+      await refreshData();
+    } catch (e) {
+      console.error('Reject Part 3 error:', e);
+    }
   };
 
-  // PART 4: Central IT Provisioning & Closure
-  const signoffPart4 = ({
+  // PART 4: Central IT Provisioning & Closure straight to PostgreSQL Database
+  const signoffPart4 = async ({
     applicationId,
     serialNumber,
     monthlyAmount,
@@ -519,128 +561,79 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     endDate: string;
     comments: string;
   }) => {
-    const timestamp = new Date().toISOString();
-    setApplications((prev) =>
-      prev.map((app) => {
-        if (app.id === applicationId) {
-          return {
-            ...app,
-            status: 'APPROVED',
-            itReviewerId: currentUser.id,
-            itReviewerName: currentUser.fullName,
-            assetSerialNumber: serialNumber,
-            deductedMonthlyAmount: monthlyAmount,
-            deductionStartDate: startDate,
-            deductionEndDate: endDate,
-            itComments: comments || 'Asset unboxed, MDM configured, and signed off.',
-            itSignedAt: timestamp,
-            itDigitalSignature: `SIG-${currentUser.fullName.split(' ')[0].toUpperCase()}-${currentUser.id.slice(0, 8)}-${Date.now()}`,
-            updatedAt: timestamp,
-          };
-        }
-        return app;
-      })
-    );
+    try {
+      const res = await fetch(`/api/applications/${applicationId}/signoff`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...getAuthHeaders(),
+        },
+        body: JSON.stringify({
+          serialNumber,
+          monthlyAmount,
+          startDate,
+          endDate,
+          comments,
+          isRejecting: false,
+        }),
+      });
 
-    logTimeline(
-      applicationId,
-      'FINALIZED_PART_4',
-      'PENDING_IT_SIGNOFF',
-      'APPROVED',
-      `Asset tagged (${serialNumber}). Deduction: ZMW ${monthlyAmount.toFixed(2)}/mo (${startDate} to ${endDate}). Sealed document ready.`
-    );
-
-    fetch(`/api/applications/${applicationId}/signoff`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-user-id': currentUser.id,
-      },
-      body: JSON.stringify({
-        serialNumber,
-        monthlyAmount,
-        startDate,
-        endDate,
-        comments,
-        isRejecting: false,
-      }),
-    }).catch((e) => console.log('API sync', e));
+      if (res.ok) {
+        const updatedApp = await res.json();
+        setApplications((prev) => prev.map((a) => (a.id === applicationId ? updatedApp : a)));
+      }
+      await refreshData();
+    } catch (e) {
+      console.error('Signoff Part 4 error:', e);
+    }
   };
 
-  const rejectPart4 = (applicationId: string, comments: string) => {
-    const timestamp = new Date().toISOString();
-    setApplications((prev) =>
-      prev.map((app) => {
-        if (app.id === applicationId) {
-          return {
-            ...app,
-            status: 'REJECTED',
-            itReviewerId: currentUser.id,
-            itReviewerName: currentUser.fullName,
-            itComments: comments,
-            itSignedAt: timestamp,
-            updatedAt: timestamp,
-          };
-        }
-        return app;
-      })
-    );
+  const rejectPart4 = async (applicationId: string, comments: string) => {
+    try {
+      const res = await fetch(`/api/applications/${applicationId}/signoff`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...getAuthHeaders(),
+        },
+        body: JSON.stringify({ comments, isRejecting: true }),
+      });
 
-    logTimeline(
-      applicationId,
-      'REJECTED_PART_4',
-      'PENDING_IT_SIGNOFF',
-      'REJECTED',
-      comments
-    );
-
-    fetch(`/api/applications/${applicationId}/signoff`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-user-id': currentUser.id,
-      },
-      body: JSON.stringify({ comments, isRejecting: true }),
-    }).catch((e) => console.log('API sync', e));
+      if (res.ok) {
+        const updatedApp = await res.json();
+        setApplications((prev) => prev.map((a) => (a.id === applicationId ? updatedApp : a)));
+      }
+      await refreshData();
+    } catch (e) {
+      console.error('Reject Part 4 error:', e);
+    }
   };
 
-  const withdrawApplication = (applicationId: string) => {
-    const timestamp = new Date().toISOString();
-    setApplications((prev) =>
-      prev.map((app) => {
-        if (app.id === applicationId && app.status === 'PENDING_GM_REVIEW') {
-          return {
-            ...app,
-            status: 'CLOSED',
-            updatedAt: timestamp,
-          };
-        }
-        return app;
-      })
-    );
+  // Application Withdrawal straight to PostgreSQL Database
+  const withdrawApplication = async (applicationId: string) => {
+    try {
+      const res = await fetch(`/api/applications/${applicationId}/withdraw`, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+      });
 
-    logTimeline(
-      applicationId,
-      'WITHDRAWN_BY_APPLICANT',
-      'PENDING_GM_REVIEW',
-      'CLOSED',
-      'Applicant withdrew the application.'
-    );
-
-    fetch(`/api/applications/${applicationId}/withdraw`, {
-      method: 'POST',
-      headers: {
-        'x-user-id': currentUser.id,
-      },
-    }).catch((e) => console.log('API sync', e));
+      if (res.ok) {
+        setApplications((prev) =>
+          prev.map((a) => (a.id === applicationId ? { ...a, status: 'CLOSED' } : a))
+        );
+      }
+      await refreshData();
+    } catch (e) {
+      console.error('Withdraw application error:', e);
+    }
   };
 
   return (
     <AppContext.Provider
       value={{
         currentUser,
-        users: MOCK_USERS,
-        institutions: INSTITUTIONS,
+        users,
+        institutions,
         applications,
         timelineEvents,
         switchUser,
@@ -648,6 +641,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         getApplicationById,
         getTimelineForApplication,
         refreshData,
+        isDbConnected,
+        lastDbSyncTime,
+        authConfig,
+        ssoLogin,
+        loginWithMicrosoft,
+        logout,
         submitPart1,
         endorsePart2,
         requestRevisionPart2,

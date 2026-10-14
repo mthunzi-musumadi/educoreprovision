@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { StatusBadge } from '../common/StatusBadge';
 import { LAPTOP_CONFIGS } from '../../data/mockData';
+import { ApplicationDetailDrawer } from '../ApplicationDetailDrawer';
+import { PurchaseApplication } from '../../types';
 import {
   FileSpreadsheet,
   Download,
@@ -13,6 +15,9 @@ import {
   CheckCircle2,
   Eye,
   FileText,
+  ChevronLeft,
+  ChevronRight,
+  TrendingUp,
 } from 'lucide-react';
 
 export const MasterSheetView: React.FC = () => {
@@ -22,6 +27,7 @@ export const MasterSheetView: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedSchool, setSelectedSchool] = useState<string>('ALL');
   const [selectedStatus, setSelectedStatus] = useState<string>('ALL');
+  const [selectedDrawerApp, setSelectedDrawerApp] = useState<PurchaseApplication | null>(null);
 
   // Filtered dataset
   const filteredApplications = applications.filter((app) => {
@@ -34,11 +40,8 @@ export const MasterSheetView: React.FC = () => {
       (applicant?.employeeNumber || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
       (app.assetSerialNumber || '').toLowerCase().includes(searchQuery.toLowerCase());
 
-    const matchesSchool =
-      selectedSchool === 'ALL' || app.institutionId === selectedSchool;
-
-    const matchesStatus =
-      selectedStatus === 'ALL' || app.status === selectedStatus;
+    const matchesSchool = selectedSchool === 'ALL' || app.institutionId === selectedSchool;
+    const matchesStatus = selectedStatus === 'ALL' || app.status === selectedStatus;
 
     return matchesSearch && matchesSchool && matchesStatus;
   });
@@ -151,84 +154,86 @@ export const MasterSheetView: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      {/* Top Banner */}
-      <div className="bg-white border border-slate-200 rounded-xl p-6 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      {/* 1. Header (Matching 1.png) */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-slate-700 mb-1">
-            <FileSpreadsheet className="w-4 h-4 text-emerald-700" />
-            <span>Educore Services · Central Administrative Single Source of Truth</span>
+          <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-emerald-700 mb-1">
+            <FileSpreadsheet className="w-4 h-4" />
+            <span>Single Source of Truth · Organization-wide Ledger</span>
           </div>
-          <h1 className="text-xl font-bold text-slate-900">
-            Master Scheme Ledger & Batch Export
+          <h1 className="text-2xl font-black text-slate-900 tracking-tight">
+            Master Sheet & Payroll Deductions
           </h1>
           <p className="text-xs text-slate-500 mt-1">
-            Unified multi-campus registry for monthly payroll deduction batches and hardware asset lifecycle management.
+            Centrally audit approved equipment allocations and generate payroll batch deduction files.{' '}
+            <span className="text-emerald-700 font-semibold">{approvedApps.length} active deduction streams</span>
           </p>
         </div>
 
-        <div className="flex items-center gap-2.5">
+        {/* Action Buttons for Export */}
+        <div className="flex items-center gap-2.5 shrink-0">
           <button
             onClick={exportPayrollCSV}
-            className="px-3.5 py-2 text-xs font-semibold text-white bg-emerald-700 hover:bg-emerald-800 rounded-lg shadow-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+            className="px-4 py-2.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-bold shadow-md shadow-emerald-100 flex items-center gap-2 transition-colors cursor-pointer"
           >
             <Download className="w-4 h-4" />
             <span>Export Payroll CSV</span>
           </button>
           <button
             onClick={exportAssetRegisterCSV}
-            className="px-3.5 py-2 text-xs font-semibold text-slate-800 bg-white border border-slate-300 hover:bg-slate-50 rounded-lg shadow-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+            className="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold shadow-xs flex items-center gap-2 transition-colors cursor-pointer"
           >
-            <Download className="w-4 h-4 text-slate-500" />
+            <Download className="w-4 h-4" />
             <span>Export Asset Register</span>
           </button>
         </div>
       </div>
 
-      {/* KPI Cards */}
+      {/* 2. Executive Metrics Strip */}
       <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
-        <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs">
-          <div className="text-xs text-slate-500 mb-1">Active Monthly Payroll Deductions</div>
-          <div className="text-lg font-bold text-emerald-700 font-mono">
-            ZMW {totalMonthlyPayrollZmw.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+        <div className="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-xs">
+          <div className="text-xs text-slate-400 font-medium mb-1">Monthly Payroll Deduction</div>
+          <div className="text-xl font-black text-slate-900 font-mono">
+            ZMW {totalMonthlyPayrollZmw.toLocaleString(undefined, { minimumFractionDigits: 2 })}
           </div>
-          <div className="text-[11px] text-slate-400 mt-1">Sum across all active staff</div>
+          <div className="text-[11px] text-slate-500 mt-1">Active gross deductions/mo</div>
         </div>
 
-        <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs">
-          <div className="text-xs text-slate-500 mb-1">Total Hardware Asset Value</div>
-          <div className="text-lg font-bold text-slate-900 font-mono">
-            ZMW {totalCapitalValueZmw.toLocaleString()}
+        <div className="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-xs">
+          <div className="text-xs text-slate-400 font-medium mb-1">Total Scheme Capital Value</div>
+          <div className="text-xl font-black text-slate-900 font-mono">
+            ZMW {totalCapitalValueZmw.toLocaleString(undefined, { minimumFractionDigits: 2 })}
           </div>
-          <div className="text-[11px] text-slate-400 mt-1">Gross capital outlay</div>
+          <div className="text-[11px] text-slate-500 mt-1">Gross equipment outlay</div>
         </div>
 
-        <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs">
-          <div className="text-xs text-slate-500 mb-1">Allocated Laptops</div>
-          <div className="text-lg font-bold text-slate-900 font-mono">
-            {approvedApps.length}
+        <div className="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-xs">
+          <div className="text-xs text-slate-400 font-medium mb-1">Active Sealed Laptops</div>
+          <div className="text-xl font-black text-emerald-700 font-mono">
+            {approvedApps.length} Units
           </div>
-          <div className="text-[11px] text-slate-400 mt-1">Sealed & active deductions</div>
+          <div className="text-[11px] text-slate-500 mt-1">Sealed & tagged assets</div>
         </div>
 
-        <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs">
-          <div className="text-xs text-slate-500 mb-1">In-Flight Queue</div>
-          <div className="text-lg font-bold text-amber-700 font-mono">
+        <div className="bg-white border border-slate-200/90 rounded-2xl p-4 shadow-xs">
+          <div className="text-xs text-slate-400 font-medium mb-1">In-Flight Queue</div>
+          <div className="text-xl font-black text-amber-700 font-mono">
             {applications.filter((a) => ['PENDING_GM_REVIEW', 'PENDING_HR_REVIEW', 'PENDING_IT_SIGNOFF'].includes(a.status)).length}
           </div>
-          <div className="text-[11px] text-slate-400 mt-1">Pending approval steps</div>
+          <div className="text-[11px] text-slate-500 mt-1">In approval workflow</div>
         </div>
       </div>
 
-      {/* Controls Strip: Tabs, Search, Campus, Status */}
-      <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          {/* Sub-Tabs */}
-          <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-lg text-xs">
+      {/* 3. Search and Filter Bar Container (Matching 1.png) */}
+      <div className="bg-white border border-slate-200/90 rounded-2xl p-3 shadow-xs flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-3 flex-1 min-w-[280px]">
+          {/* Tabs */}
+          <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl text-xs font-semibold">
             <button
               onClick={() => setActiveTab('PAYROLL')}
-              className={`px-3 py-1.5 rounded-md font-semibold transition-colors cursor-pointer ${
+              className={`px-3 py-1.5 rounded-lg transition-colors cursor-pointer ${
                 activeTab === 'PAYROLL'
-                  ? 'bg-white text-slate-900 shadow-xs'
+                  ? 'bg-white text-emerald-800 shadow-xs font-bold'
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
@@ -236,9 +241,9 @@ export const MasterSheetView: React.FC = () => {
             </button>
             <button
               onClick={() => setActiveTab('ASSETS')}
-              className={`px-3 py-1.5 rounded-md font-semibold transition-colors cursor-pointer ${
+              className={`px-3 py-1.5 rounded-lg transition-colors cursor-pointer ${
                 activeTab === 'ASSETS'
-                  ? 'bg-white text-slate-900 shadow-xs'
+                  ? 'bg-white text-emerald-800 shadow-xs font-bold'
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
@@ -247,26 +252,24 @@ export const MasterSheetView: React.FC = () => {
           </div>
 
           {/* Search Box */}
-          <div className="relative flex-1 max-w-sm">
-            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+          <div className="relative flex-1 min-w-[200px]">
+            <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search reference, name, employee ID, serial..."
-              className="w-full pl-9 pr-3 py-1.5 text-xs border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500"
+              placeholder="Search reference, staff name, employee ID, serial..."
+              className="w-full pl-9 pr-3.5 py-2 text-xs bg-slate-50/70 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 text-slate-800"
             />
           </div>
-        </div>
 
-        {/* Filters */}
-        <div className="pt-2 border-t border-slate-100 flex flex-wrap items-center gap-3 text-xs">
-          <div className="flex items-center gap-1.5">
-            <span className="text-slate-400 font-medium">Campus:</span>
+          {/* Campus Filter */}
+          <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5 text-xs text-slate-700">
+            <span className="text-slate-400 text-[11px] font-medium">Campus:</span>
             <select
               value={selectedSchool}
               onChange={(e) => setSelectedSchool(e.target.value)}
-              className="p-1.5 border border-slate-300 rounded-md bg-white text-slate-700"
+              className="bg-transparent font-semibold text-slate-800 focus:outline-none cursor-pointer"
             >
               <option value="ALL">All Educore Campuses</option>
               {institutions.map((i) => (
@@ -277,12 +280,13 @@ export const MasterSheetView: React.FC = () => {
             </select>
           </div>
 
-          <div className="flex items-center gap-1.5">
-            <span className="text-slate-400 font-medium">Status:</span>
+          {/* Status Filter */}
+          <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5 text-xs text-slate-700">
+            <span className="text-slate-400 text-[11px] font-medium">Status:</span>
             <select
               value={selectedStatus}
               onChange={(e) => setSelectedStatus(e.target.value)}
-              className="p-1.5 border border-slate-300 rounded-md bg-white text-slate-700"
+              className="bg-transparent font-semibold text-slate-800 focus:outline-none cursor-pointer"
             >
               <option value="ALL">All Statuses</option>
               <option value="PENDING_GM_REVIEW">Pending GM Review</option>
@@ -292,44 +296,51 @@ export const MasterSheetView: React.FC = () => {
               <option value="REJECTED">Rejected</option>
             </select>
           </div>
+        </div>
 
-          <span className="text-slate-400 font-mono ml-auto">
-            Showing {filteredApplications.length} of {applications.length} Records
+        {/* Counter Badge */}
+        <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-100/80 rounded-xl text-xs font-semibold text-slate-700 border border-slate-200/60">
+          <span>Total Records</span>
+          <span className="px-2 py-0.5 rounded-lg bg-white font-mono font-bold text-emerald-800 shadow-2xs">
+            {filteredApplications.length}
           </span>
         </div>
       </div>
 
-      {/* High-Density Data Grid */}
-      <div className="bg-white border border-slate-200 rounded-xl shadow-xs overflow-hidden">
+      {/* 4. High-Density Master Sheet Table (Matching 1.png) */}
+      <div className="bg-white border border-slate-200/90 rounded-2xl shadow-xs overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs text-slate-600">
-            <thead className="bg-slate-50 border-b border-slate-200 text-slate-700 font-semibold">
+            <thead className="bg-slate-50/80 border-b border-slate-200/80 text-slate-500 font-bold uppercase tracking-wider text-[10px]">
               <tr>
-                <th className="px-5 py-3">Reference No</th>
-                <th className="px-5 py-3">Staff Member</th>
-                <th className="px-5 py-3">Campus</th>
-                <th className="px-5 py-3">Hardware Tier</th>
+                <th className="px-5 py-3.5 w-8">
+                  <input type="checkbox" className="rounded text-emerald-600" />
+                </th>
+                <th className="px-5 py-3.5">Reference ID</th>
+                <th className="px-5 py-3.5">Staff Recipient</th>
+                <th className="px-5 py-3.5">School / Campus</th>
+                <th className="px-5 py-3.5">Hardware Tier</th>
                 {activeTab === 'PAYROLL' ? (
                   <>
-                    <th className="px-5 py-3">Repayment Term</th>
-                    <th className="px-5 py-3 text-right">Monthly Deduction</th>
-                    <th className="px-5 py-3">Deduction Schedule</th>
+                    <th className="px-5 py-3.5">Repayment Term</th>
+                    <th className="px-5 py-3.5 text-right">Monthly Deduction</th>
+                    <th className="px-5 py-3.5">Deduction Schedule</th>
                   </>
                 ) : (
                   <>
-                    <th className="px-5 py-3">Asset Serial / Service Tag</th>
-                    <th className="px-5 py-3">Warranty & MDM</th>
-                    <th className="px-5 py-3">Handover Sign-off</th>
+                    <th className="px-5 py-3.5">Asset Serial / Service Tag</th>
+                    <th className="px-5 py-3.5">Warranty & MDM</th>
+                    <th className="px-5 py-3.5">Handover Sign-off</th>
                   </>
                 )}
-                <th className="px-5 py-3">Status</th>
-                <th className="px-5 py-3 text-right">Actions</th>
+                <th className="px-5 py-3.5">Status</th>
+                <th className="px-5 py-3.5 text-right">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-200">
+            <tbody className="divide-y divide-slate-100">
               {filteredApplications.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="p-8 text-center text-slate-400">
+                  <td colSpan={9} className="p-12 text-center text-slate-400">
                     No matching records found in Master Sheet.
                   </td>
                 </tr>
@@ -339,22 +350,42 @@ export const MasterSheetView: React.FC = () => {
                   const school = institutions.find((i) => i.id === app.institutionId);
 
                   return (
-                    <tr key={app.id} className="hover:bg-slate-50/70 transition-colors">
-                      <td className="px-5 py-3 font-mono font-bold text-slate-900 whitespace-nowrap">
+                    <tr
+                      key={app.id}
+                      onClick={() => setSelectedDrawerApp(app)}
+                      className="hover:bg-emerald-50/30 transition-colors cursor-pointer group"
+                    >
+                      <td className="px-5 py-4 w-8" onClick={(e) => e.stopPropagation()}>
+                        <input type="checkbox" className="rounded text-emerald-600" />
+                      </td>
+                      <td className="px-5 py-4 font-mono font-bold text-slate-900 group-hover:text-emerald-700 transition-colors whitespace-nowrap">
                         {app.referenceNumber}
                       </td>
-                      <td className="px-5 py-3">
-                        <span className="font-semibold text-slate-900 block whitespace-nowrap">
-                          {applicant?.fullName}
-                        </span>
-                        <span className="text-[10px] text-slate-400 font-mono block">
-                          {applicant?.employeeNumber}
+                      <td className="px-5 py-4">
+                        <div className="flex items-center gap-2.5">
+                          <div className="w-8 h-8 rounded-full bg-emerald-100 text-emerald-800 font-bold text-xs flex items-center justify-center shrink-0">
+                            {applicant?.fullName
+                              .split(' ')
+                              .map((n) => n[0])
+                              .join('')
+                              .slice(0, 2)}
+                          </div>
+                          <div>
+                            <span className="font-bold text-slate-900 block whitespace-nowrap">
+                              {applicant?.fullName}
+                            </span>
+                            <span className="text-[11px] text-slate-400 font-mono block">
+                              {applicant?.employeeNumber} · {applicant?.department}
+                            </span>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-5 py-4 whitespace-nowrap">
+                        <span className="px-2 py-0.5 rounded-md font-semibold text-[11px] bg-slate-100 text-slate-800 border border-slate-200/70 inline-block">
+                          {school?.name}
                         </span>
                       </td>
-                      <td className="px-5 py-3 text-slate-800 whitespace-nowrap">
-                        {school?.name}
-                      </td>
-                      <td className="px-5 py-3 whitespace-nowrap">
+                      <td className="px-5 py-4 whitespace-nowrap">
                         <span className="font-semibold text-slate-800">
                           {app.requestedLaptopTier === 'LEVEL_1' ? 'Level 1' : 'Level 2'}
                         </span>
@@ -362,23 +393,23 @@ export const MasterSheetView: React.FC = () => {
 
                       {activeTab === 'PAYROLL' ? (
                         <>
-                          <td className="px-5 py-3 whitespace-nowrap">
+                          <td className="px-5 py-4 whitespace-nowrap text-slate-700">
                             {app.repaymentPeriod === 'ONE_TO_TWO_MONTHS'
                               ? '1–2 Months'
                               : app.repaymentPeriod === 'TWELVE_MONTHS'
                               ? '12 Months'
                               : '24 Months'}
                           </td>
-                          <td className="px-5 py-3 text-right font-mono font-bold text-slate-900 whitespace-nowrap">
+                          <td className="px-5 py-4 text-right font-mono font-bold text-slate-900 whitespace-nowrap">
                             ZMW{' '}
                             {(app.deductedMonthlyAmount || app.estimatedMonthlyAmountZmw).toLocaleString(
                               undefined,
                               { minimumFractionDigits: 2, maximumFractionDigits: 2 }
                             )}
                           </td>
-                          <td className="px-5 py-3 font-mono text-[11px] text-slate-600 whitespace-nowrap">
+                          <td className="px-5 py-4 font-mono text-[11px] text-slate-600 whitespace-nowrap">
                             {app.deductionStartDate ? (
-                              <span>
+                              <span className="font-semibold text-slate-800">
                                 {app.deductionStartDate} → {app.deductionEndDate}
                               </span>
                             ) : (
@@ -388,19 +419,19 @@ export const MasterSheetView: React.FC = () => {
                         </>
                       ) : (
                         <>
-                          <td className="px-5 py-3 font-mono whitespace-nowrap">
+                          <td className="px-5 py-4 font-mono whitespace-nowrap">
                             {app.assetSerialNumber ? (
-                              <span className="font-bold text-indigo-900 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200">
+                              <span className="font-bold text-slate-900 bg-slate-50 px-2 py-0.5 rounded border border-slate-200">
                                 {app.assetSerialNumber}
                               </span>
                             ) : (
                               <span className="text-slate-400 italic">Unassigned</span>
                             )}
                           </td>
-                          <td className="px-5 py-3 text-[11px] text-slate-600 whitespace-nowrap">
-                            3-Year Educore Warranty
+                          <td className="px-5 py-4 text-[11px] text-slate-600 whitespace-nowrap">
+                            3-Year Educore Campus Care
                           </td>
-                          <td className="px-5 py-3 text-[11px] text-slate-600 font-mono whitespace-nowrap">
+                          <td className="px-5 py-4 text-[11px] text-slate-600 font-mono whitespace-nowrap">
                             {app.itSignedAt
                               ? new Date(app.itSignedAt).toLocaleDateString('en-GB')
                               : '—'}
@@ -408,34 +439,74 @@ export const MasterSheetView: React.FC = () => {
                         </>
                       )}
 
-                      <td className="px-5 py-3 whitespace-nowrap">
+                      <td className="px-5 py-4 whitespace-nowrap">
                         <StatusBadge status={app.status} size="sm" />
                       </td>
-                      <td className="px-5 py-3 text-right whitespace-nowrap">
+                      <td
+                        className="px-5 py-4 text-right whitespace-nowrap"
+                        onClick={(e) => e.stopPropagation()}
+                      >
                         <div className="flex items-center justify-end gap-1.5">
                           <button
-                            onClick={() => openModal('DETAIL', app.id)}
-                            className="p-1.5 hover:bg-slate-100 text-slate-600 rounded transition-colors cursor-pointer"
-                            title="View Details"
+                            onClick={() => setSelectedDrawerApp(app)}
+                            className="p-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 transition-colors cursor-pointer"
+                            title="Open Detail Drawer"
                           >
-                            <Eye className="w-3.5 h-3.5" />
+                            <Eye className="w-3.5 h-3.5 text-slate-600" />
                           </button>
                           <button
                             onClick={() => openModal('PHYSICAL_FORM', app.id)}
-                            className="p-1.5 hover:bg-slate-100 text-slate-600 rounded transition-colors cursor-pointer"
-                            title="View Paper Form"
+                            className="p-1.5 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700 transition-colors cursor-pointer"
+                            title="View Official Facsimile Form"
                           >
-                            <FileText className="w-3.5 h-3.5" />
+                            <FileText className="w-3.5 h-3.5 text-slate-600" />
                           </button>
                         </div>
                       </td>
                     </tr>
                   );
-                }))}
-              </tbody>
-            </table>
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        {/* 5. Pagination Bar */}
+        <div className="px-6 py-4 border-t border-slate-100 bg-white flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-500">
+          <div>
+            Showing 1-{filteredApplications.length} of {applications.length} entries
+          </div>
+
+          <div className="flex items-center gap-1">
+            <button className="p-1 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-500 disabled:opacity-40 cursor-pointer">
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+            <button className="px-2.5 py-1 rounded-lg bg-emerald-700 text-white font-bold text-xs shadow-xs">
+              1
+            </button>
+            <button className="p-1 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-500 disabled:opacity-40 cursor-pointer">
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span>Rows:</span>
+            <select className="border border-slate-200 rounded-lg px-2 py-1 text-xs bg-slate-50 text-slate-700 focus:outline-none">
+              <option>10 / page</option>
+              <option>25 / page</option>
+              <option>50 / page</option>
+            </select>
           </div>
         </div>
       </div>
+
+      {/* 6. Slide-Over Drawer Detail Panel (design_inspiration/2.png) */}
+      {selectedDrawerApp && (
+        <ApplicationDetailDrawer
+          application={selectedDrawerApp}
+          onClose={() => setSelectedDrawerApp(null)}
+        />
+      )}
+    </div>
   );
 };

@@ -103,6 +103,26 @@ CREATE POLICY rls_it_manager_update ON applications
         status IN ('APPROVED', 'REJECTED')
     );
 
+-- Applicant can withdraw application while in PENDING_GM_REVIEW or REVISION_REQUIRED
+DROP POLICY IF EXISTS rls_applicant_withdraw ON applications;
+CREATE POLICY rls_applicant_withdraw ON applications
+    FOR UPDATE
+    USING (
+        applicant_id = (SELECT id FROM users WHERE entra_oid = current_auth_user_id()) AND
+        status IN ('PENDING_GM_REVIEW', 'REVISION_REQUIRED')
+    )
+    WITH CHECK (
+        status = 'CLOSED'
+    );
+
+-- Super Admin can update any application
+DROP POLICY IF EXISTS rls_super_admin_update ON applications;
+CREATE POLICY rls_super_admin_update ON applications
+    FOR UPDATE 
+    USING (
+        current_auth_role() = 'SUPER_ADMIN'
+    );
+
 -- ============================================================================
 -- 4. Approval Audit Logs Table Security Policies
 -- ============================================================================
@@ -127,4 +147,29 @@ CREATE POLICY rls_audit_insert ON approval_audit_logs
     FOR INSERT 
     WITH CHECK (
         actor_id = (SELECT id FROM users WHERE entra_oid = current_auth_user_id())
+    );
+
+-- 4.3 Superuser / System Maintenance Access
+DROP POLICY IF EXISTS rls_postgres_superuser ON applications;
+CREATE POLICY rls_postgres_superuser ON applications
+    FOR ALL
+    USING (
+        CURRENT_USER = 'postgres' OR
+        (SESSION_USER = 'postgres' AND CURRENT_USER != 'educore_app')
+    )
+    WITH CHECK (
+        CURRENT_USER = 'postgres' OR
+        (SESSION_USER = 'postgres' AND CURRENT_USER != 'educore_app')
+    );
+
+DROP POLICY IF EXISTS rls_postgres_superuser ON approval_audit_logs;
+CREATE POLICY rls_postgres_superuser ON approval_audit_logs
+    FOR ALL
+    USING (
+        CURRENT_USER = 'postgres' OR
+        (SESSION_USER = 'postgres' AND CURRENT_USER != 'educore_app')
+    )
+    WITH CHECK (
+        CURRENT_USER = 'postgres' OR
+        (SESSION_USER = 'postgres' AND CURRENT_USER != 'educore_app')
     );

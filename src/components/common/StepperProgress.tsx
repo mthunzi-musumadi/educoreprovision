@@ -1,6 +1,6 @@
 import React from 'react';
 import { ApplicationStatus, PurchaseApplication } from '../../types';
-import { Check, Clock, X, AlertTriangle } from 'lucide-react';
+import { Check, Clock, X } from 'lucide-react';
 
 interface StepperProgressProps {
   application: PurchaseApplication;
@@ -9,7 +9,7 @@ interface StepperProgressProps {
 export const StepperProgress: React.FC<StepperProgressProps> = ({ application }) => {
   const { status } = application;
 
-  const isPart1Done = true; // Once submitted, Part 1 is signed
+  const isPart1Done = true;
   const isPart2Done = ['PENDING_HR_REVIEW', 'PENDING_IT_SIGNOFF', 'APPROVED'].includes(status);
   const isPart3Done = ['PENDING_IT_SIGNOFF', 'APPROVED'].includes(status);
   const isPart4Done = status === 'APPROVED';
@@ -20,15 +20,18 @@ export const StepperProgress: React.FC<StepperProgressProps> = ({ application })
   const steps = [
     {
       num: 1,
-      title: 'Part 1: Applicant',
-      subtitle: application.termsAccepted ? 'Terms accepted & signed' : 'Pending',
+      label: 'PART 1',
+      title: 'Applicant',
+      subtitle: application.termsAccepted ? 'Terms signed' : 'Pending',
       done: isPart1Done,
       active: status === 'DRAFT',
+      failed: false,
       date: application.applicantSignedAt,
     },
     {
       num: 2,
-      title: 'Part 2: Head Teacher / GM',
+      label: 'PART 2',
+      title: 'Head Teacher / GM',
       subtitle: isPart2Done
         ? 'Endorsed'
         : status === 'PENDING_GM_REVIEW'
@@ -36,7 +39,7 @@ export const StepperProgress: React.FC<StepperProgressProps> = ({ application })
         : isRevision
         ? 'Revision requested'
         : isRejected && !isPart2Done
-        ? 'Rejected at Part 2'
+        ? 'Rejected'
         : 'Pending',
       done: isPart2Done,
       active: status === 'PENDING_GM_REVIEW',
@@ -45,9 +48,10 @@ export const StepperProgress: React.FC<StepperProgressProps> = ({ application })
     },
     {
       num: 3,
-      title: 'Part 3: Central HR',
+      label: 'PART 3',
+      title: 'Central HR',
       subtitle: isPart3Done
-        ? 'Cleared (Debt < 33%)'
+        ? 'Cleared — Debt < 33%'
         : status === 'PENDING_HR_REVIEW'
         ? 'Awaiting clearance'
         : isRejected && isPart2Done && !isPart3Done
@@ -60,9 +64,10 @@ export const StepperProgress: React.FC<StepperProgressProps> = ({ application })
     },
     {
       num: 4,
-      title: 'Part 4: Central ICT',
+      label: 'PART 4',
+      title: 'Central ICT',
       subtitle: isPart4Done
-        ? `Asset tagged (${application.assetSerialNumber || 'Assigned'})`
+        ? `Tagged — ${application.assetSerialNumber || 'Assigned'}`
         : status === 'PENDING_IT_SIGNOFF'
         ? 'Awaiting serial & schedule'
         : isRejected && isPart3Done
@@ -76,50 +81,63 @@ export const StepperProgress: React.FC<StepperProgressProps> = ({ application })
   ];
 
   return (
-    <div className="w-full bg-white border border-slate-200 rounded-lg p-4">
-      <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
-        {steps.map((st, idx) => {
-          let badgeBg = 'bg-slate-100 text-slate-500 border-slate-300';
-          let borderTop = 'border-slate-200';
+    <div className="w-full bg-white border border-slate-200 p-4 shadow-[0_1px_4px_rgba(0,0,0,0.04)]" style={{ borderRadius: 0 }}>
+      <div className="grid grid-cols-1 sm:grid-cols-4 gap-0 divide-y sm:divide-y-0 sm:divide-x divide-slate-200">
+        {steps.map((st) => {
+          // Track state color
+          const trackColor = st.done
+            ? 'border-emerald-500'
+            : st.failed
+            ? 'border-red-500'
+            : st.active
+            ? 'border-amber-500'
+            : 'border-slate-200';
 
-          if (st.done) {
-            badgeBg = 'bg-emerald-600 text-white border-emerald-600';
-            borderTop = 'border-emerald-600';
-          } else if (st.failed) {
-            badgeBg = 'bg-red-600 text-white border-red-600';
-            borderTop = 'border-red-400';
-          } else if (st.active) {
-            badgeBg = 'bg-amber-500 text-white border-amber-500 ring-2 ring-amber-100';
-            borderTop = 'border-amber-400';
-          }
+          const indicatorClass = st.done
+            ? 'bg-emerald-600 text-white border-emerald-600'
+            : st.failed
+            ? 'bg-red-600 text-white border-red-600'
+            : st.active
+            ? 'bg-amber-500 text-white border-amber-500'
+            : 'bg-white text-slate-400 border-slate-300';
 
           return (
             <div
               key={st.num}
-              className={`p-3 rounded-md border-t-2 ${borderTop} bg-slate-50/50 flex flex-col justify-between`}
+              className={`px-3.5 pt-3 pb-3 border-t-2 ${trackColor} flex flex-col gap-1.5`}
+              style={{ borderRadius: 0 }}
             >
-              <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <span className="text-xs font-semibold text-slate-800">{st.title}</span>
-                  <div
-                    className={`w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-bold border ${badgeBg}`}
-                  >
-                    {st.done ? (
-                      <Check className="w-3 h-3 stroke-3" />
-                    ) : st.failed ? (
-                      <X className="w-3 h-3 stroke-3" />
-                    ) : st.active ? (
-                      <Clock className="w-3 h-3" />
-                    ) : (
-                      st.num
-                    )}
-                  </div>
+              {/* Label row */}
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-mono font-bold text-slate-400 tracking-widest uppercase">
+                  {st.label}
+                </span>
+                {/* Square indicator */}
+                <div
+                  className={`w-5 h-5 flex items-center justify-center text-[10px] font-black border ${indicatorClass}`}
+                  style={{ borderRadius: 0 }}
+                >
+                  {st.done ? (
+                    <Check className="w-3 h-3" strokeWidth={3} />
+                  ) : st.failed ? (
+                    <X className="w-3 h-3" strokeWidth={3} />
+                  ) : st.active ? (
+                    <Clock className="w-3 h-3" />
+                  ) : (
+                    st.num
+                  )}
                 </div>
-                <p className="text-[11px] text-slate-600 font-medium">{st.subtitle}</p>
               </div>
 
+              {/* Title */}
+              <div className="text-[11px] font-bold text-slate-800 leading-tight">{st.title}</div>
+
+              {/* Subtitle */}
+              <p className="text-[10px] font-mono text-slate-500 leading-tight">{st.subtitle}</p>
+
+              {/* Date stamp */}
               {st.date && (
-                <div className="mt-2 pt-2 border-t border-slate-200/60 text-[10px] text-slate-400 font-mono">
+                <div className="mt-1 pt-1.5 border-t border-slate-100 text-[10px] font-mono text-slate-400">
                   {new Date(st.date).toLocaleDateString('en-GB', {
                     day: '2-digit',
                     month: 'short',

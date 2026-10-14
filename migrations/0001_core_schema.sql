@@ -215,17 +215,20 @@ CREATE INDEX IF NOT EXISTS idx_users_institution ON users(institution_id);
 -- 5. Reference Number Sequence Generation Trigger
 -- ============================================================================
 CREATE OR REPLACE FUNCTION generate_app_reference_number()
-RETURNS TRIGGER AS $$
+RETURNS TRIGGER 
+SECURITY DEFINER
+AS $$
 DECLARE
     year_str TEXT;
-    seq_val INT;
+    max_num INT;
 BEGIN
     year_str := TO_CHAR(NOW(), 'YYYY');
-    SELECT COUNT(*) + 1 INTO seq_val 
-    FROM applications 
-    WHERE EXTRACT(YEAR FROM created_at) = EXTRACT(YEAR FROM NOW());
-    
-    NEW.reference_number := 'EDC-ICT-' || year_str || '-' || LPAD(seq_val::TEXT, 4, '0');
+    SELECT COALESCE(MAX(SUBSTRING(reference_number FROM '(\d+)$')::INT), 0) + 1
+    INTO max_num
+    FROM applications
+    WHERE reference_number LIKE 'EDC-ICT-' || year_str || '-%';
+
+    NEW.reference_number := 'EDC-ICT-' || year_str || '-' || LPAD(max_num::TEXT, 4, '0');
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;

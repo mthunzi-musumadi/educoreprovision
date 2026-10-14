@@ -1,75 +1,51 @@
 import React from 'react';
 import { ApplicationStatus } from '../../types';
-import { CheckCircle2, Clock, AlertTriangle, XCircle, FileEdit, CheckCheck } from 'lucide-react';
 
 interface StatusBadgeProps {
   status: ApplicationStatus;
   size?: 'sm' | 'md';
 }
 
+type StatusConfig = {
+  label: string;
+  dot: string;      // color class for the 4×4 square indicator
+  text: string;     // text color class
+  border: string;   // border color class
+};
+
 export const StatusBadge: React.FC<StatusBadgeProps> = ({ status, size = 'md' }) => {
-  const getStatusConfig = () => {
+  const getStatusConfig = (): StatusConfig => {
     switch (status) {
       case 'DRAFT':
-        return {
-          label: 'Draft',
-          icon: FileEdit,
-          bg: 'bg-slate-100 text-slate-700 border-slate-200',
-        };
+        return { label: 'DRAFT', dot: 'bg-slate-400', text: 'text-slate-600', border: 'border-slate-300' };
       case 'PENDING_GM_REVIEW':
-        return {
-          label: 'Pending Head Teacher / GM',
-          icon: Clock,
-          bg: 'bg-amber-50 text-amber-800 border-amber-200',
-        };
+        return { label: 'PENDING — HEAD TEACHER', dot: 'bg-amber-500', text: 'text-amber-800', border: 'border-amber-400' };
       case 'PENDING_HR_REVIEW':
-        return {
-          label: 'Pending Central HR Review',
-          icon: Clock,
-          bg: 'bg-blue-50 text-blue-800 border-blue-200',
-        };
+        return { label: 'PENDING — CENTRAL HR', dot: 'bg-sky-500', text: 'text-sky-800', border: 'border-sky-400' };
       case 'PENDING_IT_SIGNOFF':
-        return {
-          label: 'Pending ICT Manager Sign-off',
-          icon: Clock,
-          bg: 'bg-indigo-50 text-indigo-800 border-indigo-200',
-        };
+        return { label: 'PENDING — ICT SIGN-OFF', dot: 'bg-slate-500', text: 'text-slate-800', border: 'border-slate-400' };
       case 'REVISION_REQUIRED':
-        return {
-          label: 'Revision Required',
-          icon: AlertTriangle,
-          bg: 'bg-amber-50 text-amber-800 border-amber-300',
-        };
+        return { label: 'REVISION REQUIRED', dot: 'bg-orange-500', text: 'text-orange-800', border: 'border-orange-400' };
       case 'APPROVED':
-        return {
-          label: 'Approved & Active Deduction',
-          icon: CheckCircle2,
-          bg: 'bg-emerald-50 text-emerald-800 border-emerald-200',
-        };
+        return { label: 'APPROVED — ACTIVE', dot: 'bg-emerald-500', text: 'text-emerald-800', border: 'border-emerald-400' };
       case 'REJECTED':
-        return {
-          label: 'Rejected',
-          icon: XCircle,
-          bg: 'bg-red-50 text-red-800 border-red-200',
-        };
+        return { label: 'REJECTED', dot: 'bg-red-500', text: 'text-red-800', border: 'border-red-400' };
       case 'CLOSED':
-        return {
-          label: 'Closed / Concluded',
-          icon: CheckCheck,
-          bg: 'bg-slate-100 text-slate-600 border-slate-200',
-        };
+        return { label: 'CLOSED', dot: 'bg-slate-300', text: 'text-slate-500', border: 'border-slate-300' };
     }
   };
 
   const config = getStatusConfig();
-  const Icon = config.icon;
+  const textSize = size === 'sm' ? 'text-[10px]' : 'text-[11px]';
 
   return (
     <span
-      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-xs font-medium whitespace-nowrap ${config.bg}`}
+      className={`inline-flex items-center gap-1.5 px-2 py-0.5 border bg-white whitespace-nowrap font-mono font-semibold tracking-wide shadow-sm ${textSize} ${config.text} ${config.border}`}
+      style={{ borderRadius: 0 }}
     >
-      <Icon className={size === 'sm' ? 'w-3 h-3' : 'w-3.5 h-3.5'} />
-      <span>{config.label}</span>
+      {/* 4×4 square indicator — not a rounded dot */}
+      <span className={`inline-block w-1.5 h-1.5 shrink-0 ${config.dot}`} style={{ borderRadius: 0 }} />
+      {config.label}
     </span>
   );
 };

@@ -32,29 +32,37 @@ export const PhysicalFormModal: React.FC<PhysicalFormModalProps> = ({ applicatio
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
-      <div className="bg-white rounded-xl shadow-2xl border border-slate-300 max-w-4xl w-full my-6 flex flex-col max-h-[95vh] overflow-hidden">
+    <div className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center p-2 sm:p-4 overflow-y-auto document-modal-overlay">
+      <div
+        className="bg-white border border-slate-200 max-w-4xl w-full my-4 sm:my-6 flex flex-col max-h-[95vh] overflow-hidden shadow-[0_8px_40px_rgba(0,0,0,0.18)] document-modal-container"
+        style={{ borderRadius: 0 }}
+      >
         {/* Modal Toolbar (hidden on print) */}
-        <div className="no-print px-6 py-3 bg-slate-800 text-white flex items-center justify-between border-b border-slate-700">
-          <div className="flex items-center gap-2">
-            <span className="font-semibold text-sm">
-              Physical Scheme Document Facsimile — Reference: {application.referenceNumber}
+        <div className="no-print px-6 py-3 bg-slate-900 text-white flex items-center justify-between border-b border-slate-800 shrink-0">
+          <div className="flex items-center gap-3">
+            <span className="font-semibold text-xs font-mono uppercase tracking-wide">
+              Document Facsimile — Ref: {application.referenceNumber}
             </span>
-            <span className="text-xs bg-slate-700 text-slate-300 px-2 py-0.5 rounded">
-              Status: {application.status}
+            <span
+              className="text-[10px] font-mono uppercase font-bold bg-slate-800 text-slate-300 border border-slate-700 px-2 py-0.5"
+              style={{ borderRadius: 0 }}
+            >
+              STATUS: {application.status}
             </span>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
             <button
               onClick={handlePrint}
-              className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+              className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-bold font-mono uppercase flex items-center gap-1.5 transition-colors cursor-pointer shadow-sm"
+              style={{ borderRadius: 0 }}
             >
               <Printer className="w-3.5 h-3.5" />
               <span>Print / Download PDF</span>
             </button>
             <button
               onClick={onClose}
-              className="text-slate-400 hover:text-white p-1 rounded transition-colors cursor-pointer"
+              className="text-slate-400 hover:text-white p-1.5 transition-colors cursor-pointer"
+              style={{ borderRadius: 0 }}
             >
               <X className="w-5 h-5" />
             </button>
@@ -62,8 +70,9 @@ export const PhysicalFormModal: React.FC<PhysicalFormModalProps> = ({ applicatio
         </div>
 
         {/* Paper Document Preview Frame */}
-        <div className="p-4 sm:p-8 overflow-y-auto bg-slate-200/60 flex justify-center flex-1">
-          <div className="print-page bg-white shadow-md border border-slate-300 p-8 sm:p-12 max-w-[800px] w-full text-slate-900 font-sans text-xs leading-normal select-text relative">
+        <div className="p-4 sm:p-8 overflow-y-auto bg-slate-200/80 flex-1 min-h-0 document-preview-scroll">
+          <div className="print-page bg-white shadow-xl border border-slate-300 p-8 sm:p-12 max-w-[820px] w-full min-h-[1100px] mx-auto my-0 mb-8 text-slate-900 font-sans text-xs leading-normal select-text relative flex flex-col justify-between">
+            <div className="space-y-1">
             
             {/* Top Official Letterhead matching original PDF */}
             <div className="flex items-start justify-between pb-6 border-b border-slate-300">
@@ -118,7 +127,10 @@ export const PhysicalFormModal: React.FC<PhysicalFormModalProps> = ({ applicatio
                 <div className="flex items-center gap-2">
                   <span className="font-semibold text-slate-700">Signature:</span>
                   {application.termsAccepted ? (
-                    <span className="font-mono text-emerald-800 font-semibold px-2 py-0.5 bg-emerald-50 border border-emerald-300 rounded text-[11px]">
+                    <span
+                      className="font-mono text-emerald-800 font-semibold px-2 py-0.5 bg-emerald-50 border border-emerald-300 text-[11px]"
+                      style={{ borderRadius: 0 }}
+                    >
                       [AUTHENTICATED DIGITAL SIGNATURE: {applicant?.fullName}]
                     </span>
                   ) : (
@@ -312,7 +324,7 @@ export const PhysicalFormModal: React.FC<PhysicalFormModalProps> = ({ applicatio
               {application.assetSerialNumber && (
                 <div className="text-xs">
                   <span className="font-semibold text-slate-700">Allocated Asset Serial / Service Tag: </span>
-                  <span className="font-mono font-bold text-indigo-900 ml-1">
+                  <span className="font-mono font-bold text-slate-900 ml-1">
                     {application.assetSerialNumber}
                   </span>
                 </div>
@@ -340,9 +352,10 @@ export const PhysicalFormModal: React.FC<PhysicalFormModalProps> = ({ applicatio
                 </div>
               </div>
             </div>
+          </div>
 
-            {/* Official Legal Footer matching scanned document */}
-            <div className="mt-8 pt-4 border-t border-slate-300 text-[10px] text-slate-500 flex flex-wrap items-center justify-between gap-2">
+          {/* Official Legal Footer matching scanned document */}
+            <div className="mt-8 pt-4 border-t border-slate-300 text-[10px] text-slate-500 flex flex-wrap items-center justify-between gap-2 shrink-0">
               <div>
                 Page 1 of 1 · Educore Services provides leading education through the network of schools: Frontier, Sentinel, Trident, Educore Academy
               </div>
@@ -353,9 +366,12 @@ export const PhysicalFormModal: React.FC<PhysicalFormModalProps> = ({ applicatio
 
             {/* Sealed Watermark Badge if APPROVED */}
             {application.status === 'APPROVED' && (
-              <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none opacity-15 rotate-[-25deg] border-4 border-emerald-800 rounded-2xl p-6 text-center">
-                <div className="text-4xl font-black text-emerald-900 uppercase tracking-widest">
-                  SEALED & APPROVED
+              <div
+                className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none opacity-15 rotate-[-25deg] border-4 border-emerald-800 p-6 text-center"
+                style={{ borderRadius: 0 }}
+              >
+                <div className="text-4xl font-black text-emerald-900 uppercase tracking-widest font-mono">
+                  SEALED &amp; APPROVED
                 </div>
                 <div className="text-sm font-bold text-emerald-800 font-mono mt-1">
                   EDUCORE ICT SCHEME · SOLWEZI HQ
