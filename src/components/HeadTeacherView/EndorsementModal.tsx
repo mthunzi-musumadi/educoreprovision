@@ -29,22 +29,33 @@ export const EndorsementModal: React.FC<EndorsementModalProps> = ({ application,
   const school = institutions.find((i) => i.id === application.institutionId);
   const laptopConfig = LAPTOP_CONFIGS[application.requestedLaptopTier];
 
-  const handleAction = () => {
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const handleAction = async () => {
     setError(null);
     if ((actionType === 'REVISION' || actionType === 'REJECT') && !comments.trim()) {
       setError('Comments and justification are mandatory when requesting revision or rejecting.');
       return;
     }
 
+    setIsSubmitting(true);
+    let res: { success: boolean; error?: string };
+
     if (actionType === 'ENDORSE') {
-      endorsePart2(application.id, comments);
+      res = await endorsePart2(application.id, comments);
     } else if (actionType === 'REVISION') {
-      requestRevisionPart2(application.id, comments);
+      res = await requestRevisionPart2(application.id, comments);
     } else {
-      rejectPart2(application.id, comments);
+      res = await rejectPart2(application.id, comments);
     }
 
-    onClose();
+    setIsSubmitting(false);
+
+    if (res.success) {
+      onClose();
+    } else {
+      setError(res.error || 'Operation failed in database.');
+    }
   };
 
   return (
@@ -220,7 +231,8 @@ export const EndorsementModal: React.FC<EndorsementModalProps> = ({ application,
           <button
             type="button"
             onClick={handleAction}
-            className={`px-5 py-2.5 text-xs font-bold text-white shadow-sm flex items-center gap-1.5 transition-colors cursor-pointer ${
+            disabled={isSubmitting}
+            className={`px-5 py-2.5 text-xs font-bold text-white shadow-sm flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50 ${
               actionType === 'ENDORSE'
                 ? 'bg-emerald-700 hover:bg-emerald-800'
                 : actionType === 'REVISION'
@@ -230,7 +242,9 @@ export const EndorsementModal: React.FC<EndorsementModalProps> = ({ application,
             style={{ borderRadius: 0 }}
           >
             <span>
-              {actionType === 'ENDORSE'
+              {isSubmitting
+                ? 'Saving to Database...'
+                : actionType === 'ENDORSE'
                 ? 'Confirm Endorsement'
                 : actionType === 'REVISION'
                 ? 'Send Revision Notice'

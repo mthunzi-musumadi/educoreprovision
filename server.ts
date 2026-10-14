@@ -42,19 +42,20 @@ async function startServer() {
   app.use(express.json());
 
   // Middleware to resolve actor user from x-user-id header, Authorization Bearer, or cookie
+  // Middleware to resolve actor user: verified cryptographic session token takes primary precedence
   const resolveActorUser = async (req: Request, res: Response, next: NextFunction) => {
-    let userIdentifier: string | undefined = req.headers['x-user-id'] as string;
+    let userIdentifier: string | undefined = undefined;
 
-    if (!userIdentifier && req.headers.authorization?.startsWith('Bearer ')) {
+    // 1. Check Bearer token in Authorization header
+    if (req.headers.authorization?.startsWith('Bearer ')) {
       const token = req.headers.authorization.substring(7);
       const session = verifySessionToken(token);
       if (session) {
         userIdentifier = session.userId;
-      } else {
-        userIdentifier = token;
       }
     }
 
+    // 2. Check educore_session HttpOnly cookie
     if (!userIdentifier && req.headers.cookie) {
       const cookies = parseCookies(req.headers.cookie);
       if (cookies.educore_session) {
@@ -63,6 +64,11 @@ async function startServer() {
           userIdentifier = session.userId;
         }
       }
+    }
+
+    // 3. Fallback to explicit x-user-id header (for API test suites and background jobs)
+    if (!userIdentifier && req.headers['x-user-id']) {
+      userIdentifier = req.headers['x-user-id'] as string;
     }
 
     if (userIdentifier) {
@@ -118,11 +124,14 @@ async function startServer() {
       }
       return res.redirect(authUrl);
     } else {
-      // In development or simulation without Azure credentials in .env
-      res.json({
-        configured: false,
-        message: 'Microsoft Entra ID credentials not configured in .env. Interactive directory SSO active.',
-      });
+      if (req.query.json === 'true') {
+        return res.json({
+          configured: false,
+          message: 'Microsoft Entra ID credentials not configured in .env.',
+        });
+      }
+      // Gracefully redirect back to portal with clear setup guidance
+      return res.redirect(`/?auth_error=${encodeURIComponent('Microsoft Entra ID credentials (MICROSOFT_CLIENT_ID, MICROSOFT_TENANT_ID) are not yet configured in .env.')}`);
     }
   });
 
@@ -141,9 +150,20 @@ async function startServer() {
       const cookies = parseCookies(req.headers.cookie);
       const codeVerifier = cookies.pkce_verifier;
 
+      // Microsoft Entra ID Single-Page Application (SPA) registrations require an Origin header matching the redirect URI
+      let appOrigin = origin;
+      try {
+        const parsed = new URL(config.redirectUri);
+        appOrigin = parsed.origin;
+      } catch {}
+
+      const tokenHeaders: Record<string, string> = {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Origin': appOrigin,
+      };
+
       const tokenParams = new URLSearchParams({
         client_id: config.clientId,
-        client_secret: config.clientSecret,
         code,
         redirect_uri: config.redirectUri,
         grant_type: 'authorization_code',
@@ -151,17 +171,37 @@ async function startServer() {
       if (codeVerifier) {
         tokenParams.append('code_verifier', codeVerifier);
       }
+      // In Microsoft Entra ID with PKCE, public clients (SPA/Native) must NOT send client_secret
+      if (!config.isPublicClient && config.clientSecret) {
+        tokenParams.append('client_secret', config.clientSecret);
+      }
 
-      const tokenRes = await fetch(`https://login.microsoftonline.com/${config.tenantId}/oauth2/v2.0/token`, {
+      let tokenRes = await fetch(`https://login.microsoftonline.com/${config.tenantId}/oauth2/v2.0/token`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: tokenHeaders,
         body: tokenParams.toString(),
       });
 
       if (!tokenRes.ok) {
         const errText = await tokenRes.text();
         console.error('Failed to exchange code with Microsoft token endpoint:', errText);
-        return res.redirect(`/?auth_error=${encodeURIComponent('Token exchange failed')}`);
+
+        // Auto-recovery: If Microsoft reports AADSTS700025 (client is public), retry without client_secret immediately
+        if (errText.includes('AADSTS700025') && tokenParams.has('client_secret')) {
+          console.log('[Microsoft Entra ID] App Registration is configured as a Public Client in Azure AD. Retrying token exchange with PKCE without client_secret...');
+          tokenParams.delete('client_secret');
+          tokenRes = await fetch(`https://login.microsoftonline.com/${config.tenantId}/oauth2/v2.0/token`, {
+            method: 'POST',
+            headers: tokenHeaders,
+            body: tokenParams.toString(),
+          });
+        }
+
+        if (!tokenRes.ok) {
+          const finalErr = await tokenRes.text().catch(() => errText);
+          console.error('Final token exchange error:', finalErr);
+          return res.redirect(`/?auth_error=${encodeURIComponent('Token exchange failed: ' + finalErr.slice(0, 160))}`);
+        }
       }
 
       const tokenData = (await tokenRes.json()) as any;
@@ -171,8 +211,14 @@ async function startServer() {
       const email = idTokenPayload.preferred_username || idTokenPayload.email || idTokenPayload.upn;
       const fullName = idTokenPayload.name || email?.split('@')[0] || 'Educore Staff';
       const appRole = mapEntraRoleToUserRole(idTokenPayload.roles);
-      const employeeNumber = idTokenPayload.extension_EmployeeNumber;
-      const institutionCode = idTokenPayload.extension_InstitutionCode;
+      const employeeNumber =
+        idTokenPayload.extension_EmployeeNumber ||
+        idTokenPayload.employeeId ||
+        idTokenPayload.employee_id;
+      const institutionCode =
+        idTokenPayload.extension_InstitutionCode ||
+        idTokenPayload.officeLocation ||
+        idTokenPayload.department;
 
       const user = await dbService.upsertUserFromEntraClaims({
         entraOid,
@@ -191,7 +237,7 @@ async function startServer() {
       });
 
       res.setHeader('Set-Cookie', `educore_session=${sessionToken}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800`);
-      res.redirect(`/?sso_success=true&user_id=${user.id}`);
+      res.redirect(`/?sso_success=true&user_id=${user.id}&token=${sessionToken}`);
     } catch (err: any) {
       console.error('OAuth callback processing error:', err);
       res.redirect(`/?auth_error=${encodeURIComponent(err.message)}`);

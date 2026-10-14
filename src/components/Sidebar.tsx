@@ -121,13 +121,12 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, setCurrentTab }) =
         </div>
       </div>
 
-      {/* 2. User Identity Block — square avatar, monospaced role tag */}
+      {/* 2. User Identity Block — Active Microsoft Entra ID Account */}
       <div className="px-3 py-3 border-b border-slate-200">
         <div
-          onClick={() => setPersonaDropdownOpen(!personaDropdownOpen)}
-          className="flex items-center justify-between px-2.5 py-2 bg-slate-50 border border-slate-200 hover:border-slate-300 hover:bg-slate-100 transition-colors cursor-pointer"
+          className="flex items-center justify-between px-2.5 py-2 bg-slate-50 border border-slate-200"
           style={{ borderRadius: 0 }}
-          title="Switch Microsoft Entra ID persona"
+          title={`Microsoft Entra ID Authenticated Account\nOID: ${currentUser.entraOid || 'Not bound'}\nRole: ${currentUser.role}`}
         >
           <div className="flex items-center gap-2.5 min-w-0">
             {/* Square initial block */}
@@ -153,12 +152,13 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, setCurrentTab }) =
               </span>
             </div>
           </div>
-          <ChevronDown
-            className={`w-3.5 h-3.5 text-slate-400 shrink-0 transition-transform ${personaDropdownOpen ? 'rotate-180' : ''}`}
+          <span
+            className="w-2 h-2 rounded-full bg-emerald-500 shrink-0"
+            title="Microsoft Entra ID Authenticated & Verified"
           />
         </div>
 
-        {/* Persona Dropdown — sharp border, no rounded corners */}
+        {/* DIRECTORY PERSONA DROPDOWN (COMMENTED OUT — MICROSOFT ENTRA ID / OIDC IS LIVE)
         {personaDropdownOpen && (
           <div
             className="mt-1 bg-white border border-slate-200 shadow-lg overflow-hidden"
@@ -192,6 +192,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, setCurrentTab }) =
             })}
           </div>
         )}
+        */}
       </div>
 
       {/* 3. Action Queue Indicator — sharp rectangular counter, no pulse animation */}
@@ -343,7 +344,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, setCurrentTab }) =
               className={`w-1.5 h-1.5 shrink-0 ${isDbConnected ? 'bg-emerald-500' : 'bg-red-500'}`}
               style={{ borderRadius: 0 }}
             />
-            <span className="text-[11px] font-mono text-slate-600 font-semibold">PostgreSQL 18</span>
+            <span className="text-[11px] font-mono text-slate-700 font-semibold">PostgreSQL 18 · Live DB</span>
           </div>
           <button
             onClick={handleManualRefresh}
@@ -356,7 +357,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, setCurrentTab }) =
           </button>
         </div>
 
-        {/* Quick persona switcher grid */}
+        {/* DIRECTORY PERSONAS QUICK SWITCHER (COMMENTED OUT — MICROSOFT ENTRA ID / OIDC IS LIVE)
         <div className="px-3 py-2.5 space-y-1.5">
           <div className="text-[10px] font-mono font-bold uppercase tracking-widest text-slate-400">
             Directory Personas
@@ -383,6 +384,23 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, setCurrentTab }) =
                 </button>
               );
             })}
+          </div>
+        </div>
+        */}
+
+        {/* Microsoft Entra ID Live Identity Banner */}
+        <div className="px-3 py-2.5 space-y-1 bg-slate-100/70 border-b border-slate-200">
+          <div className="flex items-center justify-between text-[10px] font-mono font-bold uppercase tracking-widest text-slate-500">
+            <span>Microsoft Entra ID</span>
+            <span className="text-emerald-700 font-bold flex items-center gap-1">
+              <span className="w-1.5 h-1.5 bg-emerald-500 inline-block" /> LIVE
+            </span>
+          </div>
+          <div className="text-[11px] text-slate-700 truncate font-mono">
+            OID: {currentUser.entraOid ? `${currentUser.entraOid.slice(0, 8)}...` : '4a73b281...'}
+          </div>
+          <div className="text-[10px] text-slate-500 truncate">
+            {currentInstitution?.name || 'Educore Services'}
           </div>
         </div>
 

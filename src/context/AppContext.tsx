@@ -10,11 +10,7 @@ import {
   User,
 } from '../types';
 import {
-  INITIAL_APPLICATIONS,
-  INITIAL_TIMELINE,
-  INSTITUTIONS,
   LAPTOP_CONFIGS,
-  MOCK_USERS,
   VERBATIM_LEGAL_POLICY,
 } from '../data/mockData';
 
@@ -28,6 +24,10 @@ export interface MicrosoftAuthConfig {
 
 interface AppContextType {
   currentUser: User;
+  isAuthenticated: boolean;
+  isLoadingAuth: boolean;
+  authError: string | null;
+  setAuthError: (err: string | null) => void;
   users: User[];
   institutions: Institution[];
   applications: PurchaseApplication[];
@@ -38,15 +38,17 @@ interface AppContextType {
   getTimelineForApplication: (applicationId: string) => ApplicationTimelineEvent[];
   refreshData: () => Promise<void>;
   
-  // Database & Microsoft OIDC Live Status
+  // Strict Live Database & Diagnostics
+  isLoading: boolean;
   isDbConnected: boolean;
+  dbError: string | null;
   lastDbSyncTime: Date | null;
   authConfig: MicrosoftAuthConfig | null;
   ssoLogin: (userId: string) => Promise<void>;
   loginWithMicrosoft: () => void;
   logout: () => Promise<void>;
   
-  // Workflow Actions
+  // Workflow Mutations (Direct PostgreSQL Transactions)
   submitPart1: (params: {
     tier: LaptopTier;
     repaymentPeriod: RepaymentPlan;
@@ -54,16 +56,16 @@ interface AppContextType {
     termsAccepted: boolean;
   }) => Promise<{ success: boolean; application?: PurchaseApplication; error?: string }>;
   
-  endorsePart2: (applicationId: string, comments: string) => Promise<void>;
-  requestRevisionPart2: (applicationId: string, comments: string) => Promise<void>;
-  rejectPart2: (applicationId: string, comments: string) => Promise<void>;
+  endorsePart2: (applicationId: string, comments: string) => Promise<{ success: boolean; error?: string }>;
+  requestRevisionPart2: (applicationId: string, comments: string) => Promise<{ success: boolean; error?: string }>;
+  rejectPart2: (applicationId: string, comments: string) => Promise<{ success: boolean; error?: string }>;
   
   clearPart3: (
     applicationId: string,
     checklist: HRVettingChecklist,
     comments: string
-  ) => Promise<void>;
-  rejectPart3: (applicationId: string, comments: string) => Promise<void>;
+  ) => Promise<{ success: boolean; error?: string }>;
+  rejectPart3: (applicationId: string, comments: string) => Promise<{ success: boolean; error?: string }>;
   
   signoffPart4: (params: {
     applicationId: string;
@@ -72,10 +74,10 @@ interface AppContextType {
     startDate: string;
     endDate: string;
     comments: string;
-  }) => Promise<void>;
-  rejectPart4: (applicationId: string, comments: string) => Promise<void>;
+  }) => Promise<{ success: boolean; error?: string }>;
+  rejectPart4: (applicationId: string, comments: string) => Promise<{ success: boolean; error?: string }>;
   
-  withdrawApplication: (applicationId: string) => Promise<void>;
+  withdrawApplication: (applicationId: string) => Promise<{ success: boolean; error?: string }>;
   resetDemoData: () => Promise<void>;
   
   // UI Helpers
@@ -90,76 +92,93 @@ interface AppContextType {
 const STORAGE_KEYS = {
   CURRENT_USER: 'educore_current_user_id',
   SESSION_TOKEN: 'educore_session_token',
-  APPLICATIONS: 'educore_applications_v1',
-  TIMELINE: 'educore_timeline_v1',
 };
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [currentUserId, setCurrentUserId] = useState<string>(() => {
-    return localStorage.getItem(STORAGE_KEYS.CURRENT_USER) || MOCK_USERS[0].id;
+    return localStorage.getItem(STORAGE_KEYS.CURRENT_USER) || '';
   });
 
   const [sessionToken, setSessionToken] = useState<string | null>(() => {
     return localStorage.getItem(STORAGE_KEYS.SESSION_TOKEN);
   });
 
-  const [applications, setApplications] = useState<PurchaseApplication[]>(() => {
-    const saved = localStorage.getItem(STORAGE_KEYS.APPLICATIONS);
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {}
-    }
-    return INITIAL_APPLICATIONS;
-  });
-
-  const [timelineEvents, setTimelineEvents] = useState<ApplicationTimelineEvent[]>(() => {
-    const saved = localStorage.getItem(STORAGE_KEYS.TIMELINE);
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {}
-    }
-    return INITIAL_TIMELINE;
-  });
-
-  const [users, setUsers] = useState<User[]>(MOCK_USERS);
-  const [institutions, setInstitutions] = useState<Institution[]>(INSTITUTIONS);
-  const [isDbConnected, setIsDbConnected] = useState<boolean>(true);
-  const [lastDbSyncTime, setLastDbSyncTime] = useState<Date | null>(new Date());
+  // Strict live state with no mock fallbacks
+  const [applications, setApplications] = useState<PurchaseApplication[]>([]);
+  const [timelineEvents, setTimelineEvents] = useState<ApplicationTimelineEvent[]>([]);
+  const [users, setUsers] = useState<User[]>([]);
+  const [institutions, setInstitutions] = useState<Institution[]>([]);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isDbConnected, setIsDbConnected] = useState<boolean>(false);
+  const [dbError, setDbError] = useState<string | null>(null);
+  const [lastDbSyncTime, setLastDbSyncTime] = useState<Date | null>(null);
   const [authConfig, setAuthConfig] = useState<MicrosoftAuthConfig | null>(null);
+
+  // Microsoft Entra ID Authentication & Session States
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
+  const [isLoadingAuth, setIsLoadingAuth] = useState<boolean>(true);
+  const [authError, setAuthError] = useState<string | null>(null);
 
   const [activeModal, setActiveModal] = useState<{
     type: 'NEW_REQUEST' | 'DETAIL' | 'ENDORSE_PART2' | 'CLEAR_PART3' | 'SIGNOFF_PART4' | 'PHYSICAL_FORM' | null;
     applicationId?: string;
   }>({ type: null });
 
-  const currentUser = users.find((u) => u.id === currentUserId) || users[0];
+  // Safe fallback user object to guarantee property access across downstream components
+  const resolvedCurrentUser: User = currentUser ||
+    users.find((u) => u.id === currentUserId) ||
+    ({
+      id: currentUserId || '',
+      fullName: isAuthenticated ? 'Educore Staff' : 'Unauthenticated',
+      email: '',
+      role: 'APPLICANT',
+      institutionId: '',
+      employeeNumber: '',
+      department: '',
+      jobTitle: '',
+      isActive: true,
+      entraOid: '',
+    } as User);
 
   const getAuthHeaders = useCallback(() => {
     const headers: Record<string, string> = {
-      'x-user-id': currentUserId,
+      'x-user-id': currentUserId || resolvedCurrentUser.id,
     };
     if (sessionToken) {
       headers['Authorization'] = `Bearer ${sessionToken}`;
     }
     return headers;
-  }, [currentUserId, sessionToken]);
+  }, [currentUserId, resolvedCurrentUser.id, sessionToken]);
 
-  // Check URL query parameters for SSO callback
+  // 1. Process URL query parameters for Microsoft OAuth2 / SSO callback
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const ssoSuccess = params.get('sso_success');
     const ssoUserId = params.get('user_id');
+    const ssoToken = params.get('token');
+    const err = params.get('auth_error');
+    const errMsg = params.get('message');
+
+    if (err) {
+      setAuthError(errMsg ? `${err}: ${errMsg}` : err);
+    }
+    if (ssoToken) {
+      setSessionToken(ssoToken);
+      localStorage.setItem(STORAGE_KEYS.SESSION_TOKEN, ssoToken);
+    }
     if (ssoSuccess && ssoUserId) {
       setCurrentUserId(ssoUserId);
+      localStorage.setItem(STORAGE_KEYS.CURRENT_USER, ssoUserId);
+    }
+    if (ssoSuccess || err || ssoToken) {
       window.history.replaceState({}, document.title, window.location.pathname);
     }
   }, []);
 
-  // Fetch Microsoft Auth Config
+  // 2. Fetch Microsoft Auth Config
   useEffect(() => {
     fetch('/api/auth/config')
       .then((r) => r.ok && r.json())
@@ -169,63 +188,51 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       .catch(() => {});
   }, []);
 
-  // Fetch institutions and users live from PostgreSQL database
-  useEffect(() => {
-    fetch('/api/institutions')
-      .then((r) => r.ok && r.json())
-      .then((data) => {
-        if (Array.isArray(data) && data.length > 0) {
-          setInstitutions(data);
-          setIsDbConnected(true);
-        }
-      })
-      .catch(() => setIsDbConnected(false));
-
-    fetch('/api/users')
-      .then((r) => r.ok && r.json())
-      .then((data) => {
-        if (Array.isArray(data) && data.length > 0) {
-          setUsers(data);
-          setIsDbConnected(true);
-        }
-      })
-      .catch(() => setIsDbConnected(false));
-  }, []);
-
-  // Fetch applications & timeline live from backend database
-  const refreshData = useCallback(async () => {
+  // 3. Verify Microsoft Entra ID session against /api/auth/me
+  const checkAuthSession = useCallback(async () => {
     try {
-      const headers = getAuthHeaders();
-      const res = await fetch('/api/applications', { headers });
+      setIsLoadingAuth(true);
+      const token = localStorage.getItem(STORAGE_KEYS.SESSION_TOKEN) || sessionToken;
+      const headers: Record<string, string> = {};
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+      const savedUserId = localStorage.getItem(STORAGE_KEYS.CURRENT_USER);
+      if (savedUserId) {
+        headers['x-user-id'] = savedUserId;
+      }
+
+      const res = await fetch('/api/auth/me', { headers, credentials: 'include' });
       if (res.ok) {
         const data = await res.json();
-        setApplications(data);
-        localStorage.setItem(STORAGE_KEYS.APPLICATIONS, JSON.stringify(data));
-        setIsDbConnected(true);
-        setLastDbSyncTime(new Date());
-      }
-
-      // Pre-fetch timeline events under RLS
-      const timelineRes = await fetch('/api/timeline', { headers });
-      if (timelineRes.ok) {
-        const tData = await timelineRes.json();
-        if (Array.isArray(tData)) {
-          setTimelineEvents(tData);
-          localStorage.setItem(STORAGE_KEYS.TIMELINE, JSON.stringify(tData));
+        if (data.authenticated && data.user) {
+          setCurrentUser(data.user);
+          setCurrentUserId(data.user.id);
+          setIsAuthenticated(true);
+          setIsLoadingAuth(false);
+          return;
         }
       }
-    } catch (e) {
-      setIsDbConnected(false);
+      // If unauthenticated or session expired
+      setIsAuthenticated(false);
+      setCurrentUser(null);
+    } catch {
+      setIsAuthenticated(false);
+      setCurrentUser(null);
+    } finally {
+      setIsLoadingAuth(false);
     }
-  }, [getAuthHeaders]);
+  }, [sessionToken]);
 
   useEffect(() => {
-    refreshData();
-  }, [refreshData, currentUserId]);
+    checkAuthSession();
+  }, [checkAuthSession]);
 
-  // Sync to local storage
+  // Sync current user selection to local storage
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.CURRENT_USER, currentUserId);
+    if (currentUserId) {
+      localStorage.setItem(STORAGE_KEYS.CURRENT_USER, currentUserId);
+    }
   }, [currentUserId]);
 
   useEffect(() => {
@@ -235,6 +242,72 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       localStorage.removeItem(STORAGE_KEYS.SESSION_TOKEN);
     }
   }, [sessionToken]);
+
+  // Fetch applications, users, institutions, and timeline live from PostgreSQL database
+  const refreshData = useCallback(async () => {
+    try {
+      const headers = getAuthHeaders();
+
+      // Fetch directory records and live database state in parallel
+      const [instRes, userRes, appRes, timelineRes] = await Promise.all([
+        fetch('/api/institutions'),
+        fetch('/api/users'),
+        fetch('/api/applications', { headers }),
+        fetch('/api/timeline', { headers }),
+      ]);
+
+      if (!instRes.ok) {
+        throw new Error(`Failed to fetch institutions from PostgreSQL (HTTP ${instRes.status})`);
+      }
+      if (!userRes.ok) {
+        throw new Error(`Failed to fetch directory users from PostgreSQL (HTTP ${userRes.status})`);
+      }
+      if (!appRes.ok) {
+        throw new Error(`Failed to fetch applications from PostgreSQL (HTTP ${appRes.status})`);
+      }
+      if (!timelineRes.ok) {
+        throw new Error(`Failed to fetch timeline logs from PostgreSQL (HTTP ${timelineRes.status})`);
+      }
+
+      const [instData, userData, appData, timelineData] = await Promise.all([
+        instRes.json(),
+        userRes.json(),
+        appRes.json(),
+        timelineRes.json(),
+      ]);
+
+      if (!Array.isArray(userData) || userData.length === 0) {
+        throw new Error('PostgreSQL database returned empty user directory.');
+      }
+
+      setInstitutions(instData);
+      setUsers(userData);
+      setApplications(appData);
+      setTimelineEvents(timelineData);
+      setIsDbConnected(true);
+      setDbError(null);
+      setLastDbSyncTime(new Date());
+
+      // Only select user if authenticated and currentUserId matches
+      if (currentUserId && !userData.some((u: User) => u.id === currentUserId)) {
+        // Stale user ID in local storage
+        setCurrentUserId('');
+      }
+    } catch (err: any) {
+      console.error('[PostgreSQL Database Error]:', err);
+      setIsDbConnected(false);
+      setDbError(err.message || 'Unable to connect to live PostgreSQL database.');
+      // STRICT: Do not load fallback data
+    } finally {
+      setIsLoading(false);
+    }
+  }, [getAuthHeaders, currentUserId]);
+
+  useEffect(() => {
+    if (isAuthenticated) {
+      refreshData();
+    }
+  }, [currentUserId, isAuthenticated]);
 
   // SSO Login handler
   const ssoLogin = async (userId: string) => {
@@ -248,14 +321,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const data = await res.json();
         if (data.token) {
           setSessionToken(data.token);
+          localStorage.setItem(STORAGE_KEYS.SESSION_TOKEN, data.token);
         }
-        setCurrentUserId(userId);
+        if (data.user) {
+          setCurrentUser(data.user);
+          setCurrentUserId(data.user.id);
+          localStorage.setItem(STORAGE_KEYS.CURRENT_USER, data.user.id);
+          setIsAuthenticated(true);
+          setAuthError(null);
+        }
         await refreshData();
       } else {
-        setCurrentUserId(userId);
+        const err = await res.json().catch(() => ({ error: 'Sign-in failed' }));
+        setAuthError(err.error || 'Sign-in failed');
       }
-    } catch {
-      setCurrentUserId(userId);
+    } catch (err: any) {
+      setAuthError(err.message || 'Network error during sign-in');
     }
   };
 
@@ -265,14 +346,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const logout = async () => {
     try {
-      await fetch('/api/auth/logout', { method: 'POST' });
+      await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
     } catch {}
     setSessionToken(null);
-    setCurrentUserId(users[0]?.id || MOCK_USERS[0].id);
+    setCurrentUser(null);
+    setIsAuthenticated(false);
+    setCurrentUserId('');
+    localStorage.removeItem(STORAGE_KEYS.SESSION_TOKEN);
+    localStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
   };
 
+  // DIRECTORY PERSONAS SWITCHER (COMMENTED OUT — MICROSOFT ENTRA ID / OIDC IS LIVE)
   const switchUser = (userId: string) => {
-    ssoLogin(userId);
+    // Disabled in live environment: Microsoft Entra ID is the active authentication provider
+    console.warn('[Entra ID Auth] Manual directory persona switching is disabled. Microsoft Entra ID is live.');
   };
 
   const openModal = (
@@ -292,7 +379,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       fetch(`/api/applications/${activeModal.applicationId}/timeline`, {
         headers: getAuthHeaders(),
       })
-        .then((r) => r.ok && r.json())
+        .then((r) => {
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          return r.json();
+        })
         .then((events) => {
           if (Array.isArray(events) && events.length > 0) {
             setTimelineEvents((prev) => {
@@ -301,32 +391,37 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             });
           }
         })
-        .catch(() => {});
+        .catch((err) => {
+          console.error('[PostgreSQL] Failed to fetch application timeline:', err);
+        });
     }
   }, [activeModal.applicationId, getAuthHeaders]);
 
   const resetDemoData = async () => {
     try {
-      await fetch('/api/database/reset', { method: 'POST' });
-    } catch (e) {}
+      const res = await fetch('/api/database/reset', { method: 'POST' });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        alert(`Reset failed: ${err.error || 'Database reset error'}`);
+        return;
+      }
+    } catch (e: any) {
+      alert(`Network error resetting database: ${e.message}`);
+      return;
+    }
 
     await refreshData();
-    setTimelineEvents(INITIAL_TIMELINE);
-    setCurrentUserId(users[0]?.id || MOCK_USERS[0].id);
-    localStorage.removeItem(STORAGE_KEYS.APPLICATIONS);
-    localStorage.removeItem(STORAGE_KEYS.TIMELINE);
-    localStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
   };
 
-  // Enforces Row-Level Security matching Section 6 of PRD
+  // Live PostgreSQL applications are already filtered by RLS on the server;
+  // this defense-in-depth ensures client alignment
   const getScopedApplications = (): PurchaseApplication[] => {
-    if (currentUser.role === 'APPLICANT') {
-      return applications.filter((app) => app.applicantId === currentUser.id);
+    if (resolvedCurrentUser.role === 'APPLICANT') {
+      return applications.filter((app) => app.applicantId === resolvedCurrentUser.id);
     }
-    if (currentUser.role === 'HEAD_TEACHER') {
-      return applications.filter((app) => app.institutionId === currentUser.institutionId);
+    if (resolvedCurrentUser.role === 'HEAD_TEACHER') {
+      return applications.filter((app) => app.institutionId === resolvedCurrentUser.institutionId);
     }
-    // HR_MANAGER, IT_MANAGER, and SUPER_ADMIN have global organization visibility
     return applications;
   };
 
@@ -338,30 +433,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return timelineEvents
       .filter((t) => t.applicationId === applicationId)
       .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
-  };
-
-  const logTimeline = (
-    applicationId: string,
-    actionType: string,
-    fromStatus: ApplicationStatus | undefined,
-    toStatus: ApplicationStatus,
-    comments?: string,
-    isInternal: boolean = false
-  ) => {
-    const newEvent: ApplicationTimelineEvent = {
-      id: `time-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-      applicationId,
-      actorId: currentUser.id,
-      actorName: currentUser.fullName,
-      actorRole: currentUser.role,
-      actionType,
-      fromStatus,
-      toStatus,
-      comments,
-      isInternal,
-      createdAt: new Date().toISOString(),
-    };
-    setTimelineEvents((prev) => [...prev, newEvent]);
   };
 
   // PART 1: Applicant Submission straight to PostgreSQL Database
@@ -383,7 +454,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // Check if applicant already has an in-flight request
     const existingActive = applications.find(
       (app) =>
-        app.applicantId === currentUser.id &&
+        app.applicantId === resolvedCurrentUser.id &&
         ['PENDING_GM_REVIEW', 'PENDING_HR_REVIEW', 'PENDING_IT_SIGNOFF', 'REVISION_REQUIRED'].includes(app.status)
     );
     if (existingActive) {
@@ -413,20 +484,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       if (!res.ok) {
         const errData = await res.json().catch(() => ({}));
-        return { success: false, error: errData.error || 'Failed to submit application to database.' };
+        return { success: false, error: errData.error || 'Failed to submit application to PostgreSQL database.' };
       }
 
       const createdApp: PurchaseApplication = await res.json();
-      setApplications((prev) => [createdApp, ...prev.filter((a) => a.id !== createdApp.id)]);
-
-      logTimeline(
-        createdApp.id,
-        'SUBMITTED_PART_1',
-        'DRAFT',
-        'PENDING_GM_REVIEW',
-        `Submitted request for ${LAPTOP_CONFIGS[tier].title} (${repaymentPeriod}) with verified legal agreement.`
-      );
-
       await refreshData();
       return { success: true, application: createdApp };
     } catch (e: any) {
@@ -446,13 +507,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         body: JSON.stringify({ comments, actionType: 'ENDORSE' }),
       });
 
-      if (res.ok) {
-        const updatedApp = await res.json();
-        setApplications((prev) => prev.map((a) => (a.id === applicationId ? updatedApp : a)));
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        return { success: false, error: errData.error || 'Failed to endorse application in database.' };
       }
+
       await refreshData();
-    } catch (e) {
+      return { success: true };
+    } catch (e: any) {
       console.error('Endorse Part 2 error:', e);
+      return { success: false, error: e.message || 'Database error during endorsement.' };
     }
   };
 
@@ -467,13 +531,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         body: JSON.stringify({ comments, actionType: 'REVISION' }),
       });
 
-      if (res.ok) {
-        const updatedApp = await res.json();
-        setApplications((prev) => prev.map((a) => (a.id === applicationId ? updatedApp : a)));
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        return { success: false, error: errData.error || 'Failed to request revision in database.' };
       }
+
       await refreshData();
-    } catch (e) {
+      return { success: true };
+    } catch (e: any) {
       console.error('Request revision error:', e);
+      return { success: false, error: e.message || 'Database error during revision request.' };
     }
   };
 
@@ -488,13 +555,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         body: JSON.stringify({ comments, actionType: 'REJECT' }),
       });
 
-      if (res.ok) {
-        const updatedApp = await res.json();
-        setApplications((prev) => prev.map((a) => (a.id === applicationId ? updatedApp : a)));
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        return { success: false, error: errData.error || 'Failed to reject application in database.' };
       }
+
       await refreshData();
-    } catch (e) {
+      return { success: true };
+    } catch (e: any) {
       console.error('Reject Part 2 error:', e);
+      return { success: false, error: e.message || 'Database error during rejection.' };
     }
   };
 
@@ -514,13 +584,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         body: JSON.stringify({ checklist, comments, isRejecting: false }),
       });
 
-      if (res.ok) {
-        const updatedApp = await res.json();
-        setApplications((prev) => prev.map((a) => (a.id === applicationId ? updatedApp : a)));
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        return { success: false, error: errData.error || 'Failed to record HR clearance in database.' };
       }
+
       await refreshData();
-    } catch (e) {
+      return { success: true };
+    } catch (e: any) {
       console.error('Clear Part 3 error:', e);
+      return { success: false, error: e.message || 'Database error during HR clearance.' };
     }
   };
 
@@ -535,13 +608,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         body: JSON.stringify({ comments, isRejecting: true }),
       });
 
-      if (res.ok) {
-        const updatedApp = await res.json();
-        setApplications((prev) => prev.map((a) => (a.id === applicationId ? updatedApp : a)));
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        return { success: false, error: errData.error || 'Failed to record HR rejection in database.' };
       }
+
       await refreshData();
-    } catch (e) {
+      return { success: true };
+    } catch (e: any) {
       console.error('Reject Part 3 error:', e);
+      return { success: false, error: e.message || 'Database error during HR rejection.' };
     }
   };
 
@@ -578,13 +654,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         }),
       });
 
-      if (res.ok) {
-        const updatedApp = await res.json();
-        setApplications((prev) => prev.map((a) => (a.id === applicationId ? updatedApp : a)));
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        return { success: false, error: errData.error || 'Failed to record IT signoff in database.' };
       }
+
       await refreshData();
-    } catch (e) {
+      return { success: true };
+    } catch (e: any) {
       console.error('Signoff Part 4 error:', e);
+      return { success: false, error: e.message || 'Database error during IT signoff.' };
     }
   };
 
@@ -599,13 +678,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         body: JSON.stringify({ comments, isRejecting: true }),
       });
 
-      if (res.ok) {
-        const updatedApp = await res.json();
-        setApplications((prev) => prev.map((a) => (a.id === applicationId ? updatedApp : a)));
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        return { success: false, error: errData.error || 'Failed to record IT rejection in database.' };
       }
+
       await refreshData();
-    } catch (e) {
+      return { success: true };
+    } catch (e: any) {
       console.error('Reject Part 4 error:', e);
+      return { success: false, error: e.message || 'Database error during IT rejection.' };
     }
   };
 
@@ -617,21 +699,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         headers: getAuthHeaders(),
       });
 
-      if (res.ok) {
-        setApplications((prev) =>
-          prev.map((a) => (a.id === applicationId ? { ...a, status: 'CLOSED' } : a))
-        );
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        return { success: false, error: errData.error || 'Failed to withdraw application in database.' };
       }
+
       await refreshData();
-    } catch (e) {
+      return { success: true };
+    } catch (e: any) {
       console.error('Withdraw application error:', e);
+      return { success: false, error: e.message || 'Database error during withdrawal.' };
     }
   };
 
   return (
     <AppContext.Provider
       value={{
-        currentUser,
+        currentUser: resolvedCurrentUser,
+        isAuthenticated,
+        isLoadingAuth,
+        authError,
+        setAuthError,
         users,
         institutions,
         applications,
@@ -641,7 +729,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         getApplicationById,
         getTimelineForApplication,
         refreshData,
+        isLoading,
         isDbConnected,
+        dbError,
         lastDbSyncTime,
         authConfig,
         ssoLogin,

@@ -13,6 +13,7 @@ import { HRClearanceModal } from './components/HRView/HRClearanceModal';
 import { ITSignoffModal } from './components/ITView/ITSignoffModal';
 import { PhysicalFormModal } from './components/DocumentFacsimile/PhysicalFormModal';
 import { ApplicationDetailDrawer } from './components/ApplicationDetailDrawer';
+import { LoginView } from './components/auth/LoginView';
 
 const isTabAllowedForRole = (tab: string, role: string) => {
   if (role === 'SUPER_ADMIN') return true;
@@ -36,15 +37,113 @@ const getDefaultTabForRole = (role: string) => {
 };
 
 const AppContent: React.FC = () => {
-  const { currentUser, activeModal, closeModal, getApplicationById } = useApp();
+  const {
+    currentUser,
+    isAuthenticated,
+    isLoadingAuth,
+    users,
+    isLoading,
+    dbError,
+    isDbConnected,
+    refreshData,
+    activeModal,
+    closeModal,
+    getApplicationById,
+  } = useApp();
   const [currentTab, setCurrentTab] = useState<string>('my-requests');
 
   // Auto-switch primary tab when persona changes to matching role view
   useEffect(() => {
-    if (!isTabAllowedForRole(currentTab, currentUser.role)) {
+    if (currentUser?.role && !isTabAllowedForRole(currentTab, currentUser.role)) {
       setCurrentTab(getDefaultTabForRole(currentUser.role));
     }
-  }, [currentUser.id, currentUser.role, currentTab]);
+  }, [currentUser?.id, currentUser?.role, currentTab]);
+
+  // Loading state while checking Microsoft Entra ID session
+  if (isLoadingAuth) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center p-6 text-slate-100 font-sans">
+        <div
+          className="bg-slate-900 border border-slate-800 p-8 max-w-md w-full shadow-2xl space-y-4"
+          style={{ borderRadius: 0 }}
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-3 h-3 bg-emerald-500 animate-pulse" style={{ borderRadius: 0 }} />
+            <h1 className="text-xs font-mono font-bold uppercase tracking-wider text-slate-200">
+              Educore Provision · Microsoft Entra ID
+            </h1>
+          </div>
+          <p className="text-xs text-slate-400 font-mono leading-relaxed">
+            Validating active Microsoft Entra ID authentication and OIDC session...
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // Primary Gateway: Microsoft Entra ID Single Sign-On required
+  if (!isAuthenticated || !currentUser?.id) {
+    return <LoginView />;
+  }
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center p-6 text-slate-100 font-sans">
+        <div
+          className="bg-white text-slate-900 border border-slate-200 p-8 max-w-md w-full shadow-2xl space-y-4"
+          style={{ borderRadius: 0 }}
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-3 h-3 bg-indigo-700 animate-pulse" style={{ borderRadius: 0 }} />
+            <h1 className="text-xs font-mono font-bold uppercase tracking-wider text-slate-900">
+              Educore Provision · PostgreSQL 18
+            </h1>
+          </div>
+          <p className="text-xs text-slate-600 font-mono leading-relaxed">
+            Connecting directly to PostgreSQL live database and synchronizing live directory records...
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (dbError || !isDbConnected || users.length === 0) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center p-6 text-slate-100 font-sans">
+        <div
+          className="bg-white text-slate-900 border-2 border-red-500 p-8 max-w-lg w-full shadow-2xl space-y-4"
+          style={{ borderRadius: 0 }}
+        >
+          <div className="flex items-center gap-2.5 text-red-700 font-mono text-sm font-bold uppercase tracking-tight">
+            <span className="w-2.5 h-2.5 bg-red-600 shrink-0" style={{ borderRadius: 0 }} />
+            <span>Database Connection Error :(</span>
+          </div>
+
+          <div
+            className="p-3 bg-red-50 border border-red-200 text-xs font-mono text-red-800 leading-relaxed"
+            style={{ borderRadius: 0 }}
+          >
+            {dbError || 'Failed to establish connection to PostgreSQL live database.'}
+          </div>
+
+          <p className="text-xs text-slate-600 leading-relaxed">
+            The platform is running in strict live database mode with zero mock fallbacks. A live PostgreSQL 18 connection is mandatory for authentication, Row-Level Security, applications, and audit logs.
+          </p>
+
+          <div className="pt-2 flex items-center gap-3">
+            <button
+              onClick={() => refreshData()}
+              className="px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold font-mono transition-colors cursor-pointer"
+              style={{ borderRadius: 0 }}
+            >
+              Retry Live Connection
+            </button>
+            <span className="text-[11px] font-mono text-slate-400">Host: 127.0.0.1:5432</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const targetApp = activeModal.applicationId
     ? getApplicationById(activeModal.applicationId)

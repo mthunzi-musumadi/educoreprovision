@@ -571,9 +571,13 @@ export const ApplicationDetailDrawer: React.FC<ApplicationDetailDrawerProps> = (
 
             {canWithdraw && (
               <button
-                onClick={() => {
-                  if (window.confirm('Are you sure you want to withdraw this application?')) {
-                    withdrawApplication(application.id);
+                onClick={async () => {
+                  if (window.confirm('Are you sure you want to withdraw this application? This action cannot be undone.')) {
+                    const res = await withdrawApplication(application.id);
+                    if (res && !res.success) {
+                      alert(`Withdrawal failed: ${res.error || 'Database error'}`);
+                      return;
+                    }
                     onClose();
                   }
                 }}

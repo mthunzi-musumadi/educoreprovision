@@ -10,6 +10,7 @@ export interface MicrosoftOidcConfig {
   clientSecret: string;
   redirectUri: string;
   isConfigured: boolean;
+  isPublicClient: boolean;
 }
 
 export function getMicrosoftOidcConfig(reqOrigin?: string): MicrosoftOidcConfig {
@@ -32,12 +33,18 @@ export function getMicrosoftOidcConfig(reqOrigin?: string): MicrosoftOidcConfig 
     process.env.AZURE_REDIRECT_URI ||
     `${appUrl.replace(/\/$/, '')}/api/auth/callback`;
 
+  const isPublicClient =
+    process.env.MICROSOFT_PUBLIC_CLIENT === 'true' ||
+    process.env.MICROSOFT_CLIENT_TYPE === 'public' ||
+    !clientSecret;
+
   return {
     tenantId,
     clientId,
     clientSecret,
     redirectUri,
     isConfigured: Boolean(clientId && tenantId),
+    isPublicClient,
   };
 }
 

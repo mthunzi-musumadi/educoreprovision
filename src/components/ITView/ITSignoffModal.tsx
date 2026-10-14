@@ -58,7 +58,9 @@ export const ITSignoffModal: React.FC<ITSignoffModalProps> = ({ application, onC
   const [isRejecting, setIsRejecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const handleAction = () => {
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const handleAction = async () => {
     setError(null);
 
     if (isRejecting) {
@@ -66,8 +68,14 @@ export const ITSignoffModal: React.FC<ITSignoffModalProps> = ({ application, onC
         setError('A mandatory rejection comment (e.g. stock unavailable) is required.');
         return;
       }
-      rejectPart4(application.id, comments);
-      onClose();
+      setIsSubmitting(true);
+      const res = await rejectPart4(application.id, comments);
+      setIsSubmitting(false);
+      if (res.success) {
+        onClose();
+      } else {
+        setError(res.error || 'Rejection failed in database.');
+      }
       return;
     }
 
@@ -86,7 +94,8 @@ export const ITSignoffModal: React.FC<ITSignoffModalProps> = ({ application, onC
       return;
     }
 
-    signoffPart4({
+    setIsSubmitting(true);
+    const res = await signoffPart4({
       applicationId: application.id,
       serialNumber: serialNumber.trim().toUpperCase(),
       monthlyAmount: Number(monthlyAmount),
@@ -94,7 +103,13 @@ export const ITSignoffModal: React.FC<ITSignoffModalProps> = ({ application, onC
       endDate,
       comments: comments.trim() || 'Device imaged, Intune MDM enrolled, and verified ready for delivery.',
     });
-    onClose();
+    setIsSubmitting(false);
+
+    if (res.success) {
+      onClose();
+    } else {
+      setError(res.error || 'IT Signoff failed in database.');
+    }
   };
 
   return (
@@ -280,7 +295,8 @@ export const ITSignoffModal: React.FC<ITSignoffModalProps> = ({ application, onC
             <button
               type="button"
               onClick={handleAction}
-              className={`px-5 py-2.5 text-xs font-bold text-white shadow-sm flex items-center gap-1.5 cursor-pointer ${
+              disabled={isSubmitting}
+              className={`px-5 py-2.5 text-xs font-bold text-white shadow-sm flex items-center gap-1.5 cursor-pointer disabled:opacity-50 ${
                 isRejecting
                   ? 'bg-red-600 hover:bg-red-700'
                   : 'bg-emerald-700 hover:bg-emerald-800'
@@ -288,7 +304,13 @@ export const ITSignoffModal: React.FC<ITSignoffModalProps> = ({ application, onC
               style={{ borderRadius: 0 }}
             >
               <FileCheck className="w-4 h-4" />
-              <span>{isRejecting ? 'Confirm IT Rejection' : 'Finalize, Sign & Close Request'}</span>
+              <span>
+                {isSubmitting
+                  ? 'Saving to Database...'
+                  : isRejecting
+                  ? 'Confirm IT Rejection'
+                  : 'Finalize, Sign & Close Request'}
+              </span>
             </button>
           </div>
         </div>

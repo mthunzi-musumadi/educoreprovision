@@ -40,7 +40,7 @@ export const Header: React.FC<HeaderProps> = ({ currentTab, setCurrentTab }) => 
 
   return (
     <header className="w-full bg-white border-b border-slate-200 sticky top-0 z-40">
-      {/* 1. Global Persona Switcher Strip (Requirement for interactive multi-role testing) */}
+      {/* DIRECTORY PERSONA SWITCHER STRIP (COMMENTED OUT — MICROSOFT ENTRA ID / OIDC IS LIVE)
       <div className="bg-slate-900 text-slate-200 px-4 py-2 text-xs border-b border-slate-800">
         <div className="w-full px-4 sm:px-8 lg:px-10 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2">
@@ -87,6 +87,7 @@ export const Header: React.FC<HeaderProps> = ({ currentTab, setCurrentTab }) => 
           </div>
         </div>
       </div>
+      */}
 
       {/* 2. Primary Navigation Bar adhering to Top Bar Contract */}
       <div className="w-full px-4 sm:px-8 lg:px-10">

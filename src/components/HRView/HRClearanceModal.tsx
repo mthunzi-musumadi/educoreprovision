@@ -33,7 +33,9 @@ export const HRClearanceModal: React.FC<HRClearanceModalProps> = ({ application,
   const school = institutions.find((i) => i.id === application.institutionId);
   const laptopConfig = LAPTOP_CONFIGS[application.requestedLaptopTier];
 
-  const handleAction = () => {
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const handleAction = async () => {
     setError(null);
 
     if (isRejecting) {
@@ -41,8 +43,14 @@ export const HRClearanceModal: React.FC<HRClearanceModalProps> = ({ application,
         setError('A mandatory rejection comment explaining the payroll/standing constraint is required.');
         return;
       }
-      rejectPart3(application.id, comments);
-      onClose();
+      setIsSubmitting(true);
+      const res = await rejectPart3(application.id, comments);
+      setIsSubmitting(false);
+      if (res.success) {
+        onClose();
+      } else {
+        setError(res.error || 'Rejection failed in database.');
+      }
       return;
     }
 
@@ -60,12 +68,19 @@ export const HRClearanceModal: React.FC<HRClearanceModalProps> = ({ application,
       verifiedAt: new Date().toISOString(),
     };
 
-    clearPart3(
+    setIsSubmitting(true);
+    const res = await clearPart3(
       application.id,
       checklist,
       comments || 'All statutory HR payroll criteria verified and within limits.'
     );
-    onClose();
+    setIsSubmitting(false);
+
+    if (res.success) {
+      onClose();
+    } else {
+      setError(res.error || 'Clearance recording failed in database.');
+    }
   };
 
   return (
@@ -253,7 +268,8 @@ export const HRClearanceModal: React.FC<HRClearanceModalProps> = ({ application,
             <button
               type="button"
               onClick={handleAction}
-              className={`px-5 py-2.5 text-xs font-bold text-white shadow-sm flex items-center gap-1.5 transition-colors cursor-pointer ${
+              disabled={isSubmitting}
+              className={`px-5 py-2.5 text-xs font-bold text-white shadow-sm flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50 ${
                 isRejecting
                   ? 'bg-red-600 hover:bg-red-700'
                   : 'bg-emerald-700 hover:bg-emerald-800'
@@ -261,7 +277,13 @@ export const HRClearanceModal: React.FC<HRClearanceModalProps> = ({ application,
               style={{ borderRadius: 0 }}
             >
               <Check className="w-4 h-4" />
-              <span>{isRejecting ? 'Confirm Rejection' : 'Approve Clearance & Route to IT'}</span>
+              <span>
+                {isSubmitting
+                  ? 'Saving to Database...'
+                  : isRejecting
+                  ? 'Confirm Rejection'
+                  : 'Approve Clearance & Route to IT'}
+              </span>
             </button>
           </div>
         </div>
