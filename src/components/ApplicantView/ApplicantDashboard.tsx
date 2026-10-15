@@ -84,10 +84,8 @@ export const ApplicantDashboard: React.FC = () => {
           p.current_contract_end_date || 'N/A'
         })`;
       case 'CHILD_ADMISSION': {
-        const school = institutions.find((i) => i.id === p.target_school_id);
-        return `Child: ${p.child_full_name || 'N/A'} → ${school?.name || 'Educore School'} (${
-          p.academic_year || ''
-        })`;
+        const count = Array.isArray(p.children) ? p.children.length : 1;
+        return `${count} Child(ren) listed for Admission · Academic Year ${p.academic_year || ''}`;
       }
       case 'EXCULPATORY':
         return `Ref: ${p.charge_reference || 'N/A'} · Incident: ${p.incident_date || 'N/A'}`;
@@ -116,37 +114,37 @@ export const ApplicantDashboard: React.FC = () => {
     switch (app.status) {
       case 'APPROVED':
         return (
-          <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800">
+          <span className="px-3 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
             Approved
           </span>
         );
       case 'REJECTED':
         return (
-          <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-red-100 text-red-800">
+          <span className="px-3 py-0.5 rounded-full text-[11px] font-semibold bg-rose-50 text-rose-700 border border-rose-200">
             Rejected
           </span>
         );
       case 'REVISION_REQUIRED':
         return (
-          <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-orange-100 text-orange-800">
+          <span className="px-3 py-0.5 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">
             Revision Required
           </span>
         );
       case 'IN_REVIEW':
         return (
-          <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-amber-100 text-amber-800">
+          <span className="px-3 py-0.5 rounded-full text-[11px] font-semibold bg-blue-50 text-blue-700 border border-blue-200">
             Awaiting {app.current_approver_role?.replace(/_/g, ' ') || 'Review'}
           </span>
         );
       case 'CLOSED':
         return (
-          <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-slate-200 text-slate-600">
+          <span className="px-3 py-0.5 rounded-full text-[11px] font-semibold bg-slate-50 text-slate-600 border border-slate-200">
             Withdrawn / Closed
           </span>
         );
       default:
         return (
-          <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-slate-100 text-slate-700">
+          <span className="px-3 py-0.5 rounded-full text-[11px] font-semibold bg-slate-50 text-slate-700 border border-slate-200">
             Draft
           </span>
         );
@@ -165,21 +163,27 @@ export const ApplicantDashboard: React.FC = () => {
   }
 
   return (
-    <div className="p-6 max-w-6xl mx-auto space-y-6">
-      {/* Top Banner */}
+    <div className="p-6 max-w-6xl mx-auto space-y-5">
+      {/* Top Breadcrumb Bar (Matches 1.png) */}
+      <div className="flex items-center gap-2 text-xs text-slate-500 font-medium">
+        <span className="font-mono text-slate-400 font-bold">&lt;&gt;</span>
+        <span className="text-slate-700 font-semibold">Staff Provision &amp; Personal Applications</span>
+      </div>
+
+      {/* Top Banner (Matches 1.png) */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">
-            Staff Provision & Workflow Portal
+          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">
+            Staff Provision &amp; Workflow Portal
           </h1>
           <p className="text-xs text-slate-500 mt-1">
-            Logged in as <span className="font-semibold text-slate-700">{currentUser?.full_name}</span> ({currentUser?.institution_name || 'Educore Services'})
+            Logged in as <span className="font-semibold text-slate-700">{currentUser?.full_name}</span> · {currentUser?.institution_name || 'Educore Services'}
           </p>
         </div>
         <button
           type="button"
           onClick={() => setShowNewModal(true)}
-          className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-600 text-white text-xs font-bold hover:bg-blue-700 shadow-sm transition"
+          className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold shadow-2xs transition cursor-pointer"
         >
           <Plus className="w-4 h-4" />
           New Application Request
@@ -187,81 +191,89 @@ export const ApplicantDashboard: React.FC = () => {
       </div>
 
       {/* KPI Summary Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <div className="bg-white p-4 rounded-xl border border-slate-200 flex items-center justify-between">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3.5">
+        <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-2xs flex items-center justify-between">
           <div>
             <span className="text-xs text-slate-500 font-medium">Total Applications</span>
             <p className="text-2xl font-bold text-slate-900 mt-1">{stats.total}</p>
           </div>
-          <FileText className="w-8 h-8 text-slate-400" />
+          <div className="w-10 h-10 rounded-xl bg-slate-50 flex items-center justify-center text-slate-600">
+            <FileText className="w-5 h-5" />
+          </div>
         </div>
-        <div className="bg-white p-4 rounded-xl border border-slate-200 flex items-center justify-between">
+
+        <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-2xs flex items-center justify-between">
           <div>
             <span className="text-xs text-slate-500 font-medium">In Review Pipeline</span>
             <p className="text-2xl font-bold text-amber-600 mt-1">{stats.inReview}</p>
           </div>
-          <Clock className="w-8 h-8 text-amber-500" />
+          <div className="w-10 h-10 rounded-xl bg-amber-50 flex items-center justify-center text-amber-600">
+            <Clock className="w-5 h-5" />
+          </div>
         </div>
-        <div className="bg-white p-4 rounded-xl border border-slate-200 flex items-center justify-between">
+
+        <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-2xs flex items-center justify-between">
           <div>
             <span className="text-xs text-slate-500 font-medium">Action / Drafts</span>
             <p className="text-2xl font-bold text-orange-600 mt-1">{stats.actionRequired}</p>
           </div>
-          <AlertTriangle className="w-8 h-8 text-orange-500" />
+          <div className="w-10 h-10 rounded-xl bg-orange-50 flex items-center justify-center text-orange-600">
+            <AlertTriangle className="w-5 h-5" />
+          </div>
         </div>
-        <div className="bg-white p-4 rounded-xl border border-slate-200 flex items-center justify-between">
+
+        <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-2xs flex items-center justify-between">
           <div>
             <span className="text-xs text-slate-500 font-medium">Approved</span>
             <p className="text-2xl font-bold text-emerald-600 mt-1">{stats.approved}</p>
           </div>
-          <CheckCircle2 className="w-8 h-8 text-emerald-500" />
+          <div className="w-10 h-10 rounded-xl bg-emerald-50 flex items-center justify-center text-emerald-600">
+            <CheckCircle2 className="w-5 h-5" />
+          </div>
         </div>
       </div>
 
-      {/* Filters & Search Bar */}
-      <div className="bg-white p-4 rounded-xl border border-slate-200 flex flex-col md:flex-row gap-3 items-center justify-between">
-        <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
-          <Filter className="w-4 h-4 text-slate-400 mr-1" />
-          {(['ALL', 'IT', 'HR', 'FINANCE', 'LOGISTICS'] as const).map((dept) => (
-            <button
-              type="button"
-              key={dept}
-              onClick={() => setDeptFilter(dept)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
-                deptFilter === dept
-                  ? 'bg-slate-900 text-white'
-                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-              }`}
-            >
-              {dept === 'ALL' ? 'All Depts' : dept}
-            </button>
-          ))}
+      {/* Unified Search & Filter Toolbar (Matches 1.png) */}
+      <div className="bg-white p-2.5 rounded-2xl border border-slate-200/80 shadow-2xs flex flex-wrap items-center gap-2.5">
+        <div className="relative flex-1 min-w-[220px]">
+          <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+          <input
+            type="text"
+            placeholder="Search reference, form title..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full pl-9 pr-3 py-2 border border-slate-200 rounded-xl text-xs bg-slate-50/50 hover:bg-white focus:bg-white focus:border-blue-500 focus:outline-hidden transition"
+          />
         </div>
 
-        <div className="flex items-center gap-3 w-full md:w-auto">
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value as LifecycleStatus | 'ALL')}
-            className="border border-slate-200 rounded-lg px-3 py-1.5 text-xs font-medium text-slate-700"
-          >
-            <option value="ALL">All Statuses</option>
-            <option value="IN_REVIEW">In Review</option>
-            <option value="REVISION_REQUIRED">Revision Required</option>
-            <option value="APPROVED">Approved</option>
-            <option value="REJECTED">Rejected</option>
-            <option value="DRAFT">Draft</option>
-          </select>
+        <select
+          value={deptFilter}
+          onChange={(e) => setDeptFilter(e.target.value as DepartmentCode | 'ALL')}
+          className="border border-slate-200 bg-white hover:bg-slate-50 rounded-xl px-3 py-2 text-xs font-medium text-slate-700 cursor-pointer"
+        >
+          <option value="ALL">Category: All Departments</option>
+          <option value="IT">IT</option>
+          <option value="HR">Human Resources</option>
+          <option value="FINANCE">Finance &amp; Stores</option>
+          <option value="LOGISTICS">Logistics</option>
+        </select>
 
-          <div className="relative flex-1 md:w-56">
-            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-            <input
-              type="text"
-              placeholder="Search reference or form..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-8 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs"
-            />
-          </div>
+        <select
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value as LifecycleStatus | 'ALL')}
+          className="border border-slate-200 bg-white hover:bg-slate-50 rounded-xl px-3 py-2 text-xs font-medium text-slate-700 cursor-pointer"
+        >
+          <option value="ALL">Status: All Statuses</option>
+          <option value="IN_REVIEW">In Review</option>
+          <option value="REVISION_REQUIRED">Revision Required</option>
+          <option value="APPROVED">Approved</option>
+          <option value="REJECTED">Rejected</option>
+          <option value="DRAFT">Draft</option>
+        </select>
+
+        <div className="flex items-center gap-2 border border-slate-200 rounded-xl px-3 py-1.5 bg-slate-50 text-xs font-medium text-slate-700 ml-auto shrink-0">
+          <span className="text-slate-500">Total Applications:</span>
+          <span className="font-bold font-mono text-slate-900">{myApplications.length}</span>
         </div>
       </div>
 
@@ -279,7 +291,7 @@ export const ApplicantDashboard: React.FC = () => {
             <div
               key={app.id}
               onClick={() => setSelectedApp(app)}
-              className="bg-white rounded-xl border border-slate-200 p-5 hover:border-blue-500 hover:shadow-sm transition cursor-pointer space-y-4"
+              className="bg-white rounded-2xl border border-slate-200/80 p-5 hover:border-blue-500 hover:shadow-xs transition cursor-pointer space-y-4"
             >
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                 <div className="space-y-1">

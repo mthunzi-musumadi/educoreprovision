@@ -63,10 +63,13 @@ export type UserRole =
   | 'APPLICANT'
   | 'LINE_MANAGER'
   | 'HEAD_TEACHER'
+  | 'HR_OFFICER'
   | 'HR_MANAGER'
   | 'IT_MANAGER'
   | 'FINANCE_MANAGER'
   | 'LOGISTICS_MANAGER'
+  | 'EXECUTIVE_HEAD'
+  | 'COO'
   | 'SUPER_ADMIN';
 
 export type LifecycleStatus =
@@ -97,7 +100,9 @@ export type FormCode =
   | 'MANPOWER_REQ'
   | 'EVENT_COMPLETION'
   | 'STOCK_RETURN'
-  | 'STORES_REQ';
+  | 'STORES_REQ'
+  | 'EXPENSE_RETIREMENT'
+  | 'PURCHASE_REQ';
 
 export interface WorkflowPipelineStep {
   step_order: number;
@@ -109,33 +114,98 @@ export interface WorkflowPipelineStep {
 // Required payload keys per form so rubbish JSON doesn't hit Postgres
 const REQUIRED_PAYLOAD_FIELDS: Record<FormCode, string[]> = {
   ICT_PURCHASE: ['equipment_tier_id', 'repayment_period', 'estimated_monthly_amount_zmw'],
-  TRAVEL_REQUEST: ['destination', 'departure_date', 'return_date', 'purpose'],
+  TRAVEL_REQUEST: [
+    'cost_code',
+    'contact_number',
+    'site',
+    'reason_for_travel',
+    'passengers',
+    'flight_booking_type',
+  ],
   SALARY_ADVANCE: ['requested_amount_zmw', 'reason', 'repayment_months'],
   PROF_DEV: ['course_title', 'provider', 'cost_zmw', 'start_date'],
   BANK_CHANGE: ['bank_name', 'branch_name', 'account_number', 'account_type'],
   CONTRACT_RENEWAL: ['current_contract_end_date', 'proposed_tenure_months'],
-  CHILD_ADMISSION: ['child_full_name', 'date_of_birth', 'target_school_id', 'academic_year'],
+  CHILD_ADMISSION: ['academic_year', 'children'], // ONLY root keys go here!
   EXCULPATORY: ['incident_date', 'charge_reference', 'employee_statement'],
   GRATUITY_ADVANCE: ['contract_start_date', 'accrued_months', 'requested_amount_zmw'],
   JOB_DESCRIPTION: ['job_title', 'department', 'key_responsibilities'],
   MANPOWER_REQ: ['position_title', 'department', 'headcount', 'justification'],
-  EVENT_COMPLETION: ['event_name', 'event_date', 'total_budget_zmw', 'actual_spend_zmw'],
-  STOCK_RETURN: ['items', 'return_reason'],       // items: Array<{ item_code, description, qty, condition }>
-  STORES_REQ: ['items', 'cost_center'],           // items: Array<{ item_code, description, qty_requested }>
+  EVENT_COMPLETION: [
+      'schools',
+      'event_name',
+      'event_type',
+      'event_coordinator',
+      'file_number',
+      'file_open_date',
+      'event_date',
+    ],
+  STOCK_RETURN: ['location', 'return_reason', 'items'],
+  STORES_REQ: ['department', 'purpose', 'items'],
+  EXPENSE_RETIREMENT: [
+    'requisition_type',
+    'cost_centre',
+    'imprest_recipient',
+    'currency',
+    'amounts_requested',
+  ],
+  PURCHASE_REQ: [
+    'cost_centre',
+    'available_budget',
+    'currency',
+    'budget_type',
+    'items',
+  ],
 };
 
-export function validateFormPayload(formCode: FormCode, payload: Record<string, unknown>): void {
+export function validateFormPayload(formCode: FormCode, payload: Record<string, any>): void {
   const required = REQUIRED_PAYLOAD_FIELDS[formCode];
   if (!required) {
     throw new Error(`Unknown form code: ${formCode}`);
   }
+
   const missing = required.filter(
     (key) => payload[key] === undefined || payload[key] === null || payload[key] === ''
   );
   if (missing.length > 0) {
     throw new Error(`Invalid payload for ${formCode}. Missing required fields: ${missing.join(', ')}`);
   }
+
+  // Validate multi-child array for CHILD_ADMISSION
+  if (formCode === 'CHILD_ADMISSION') {
+    if (!Array.isArray(payload.children) || payload.children.length === 0) {
+      throw new Error('At least one child must be added to the Child Admission form.');
+    }
+    payload.children.forEach((child: any, idx: number) => {
+      if (!child.child_full_name || !child.date_of_birth || !child.target_school_id) {
+        throw new Error(
+          `Child #${idx + 1} is missing required fields (Name, Date of Birth, or Target School).`
+        );
+      }
+    });
+  }
+
+  // Validate line-item arrays for STORES_REQ & STOCK_RETURN
+  if (formCode === 'STORES_REQ' || formCode === 'STOCK_RETURN') {
+    if (!Array.isArray(payload.items) || payload.items.length === 0) {
+      throw new Error(`At least one line item is required for ${formCode}.`);
+    }
+  }
+
+  if (formCode === 'TRAVEL_REQUEST') {
+    if (!Array.isArray(payload.passengers) || payload.passengers.length === 0) {
+      throw new Error('At least one passenger must be listed on the Travel Request Form.');
+    }
+    payload.passengers.forEach((p: any, idx: number) => {
+      if (!p.surname || !p.first_name || !p.date_of_birth) {
+        throw new Error(
+          `Passenger #${idx + 1} is missing required ID details (Surname, First Name, or Date of Birth).`
+        );
+      }
+    });
+  }
 }
+
 
 // ============================================================================
 // 3. CORE WORKFLOW ENGINE QUERIES
