@@ -102,7 +102,9 @@ export type FormCode =
   | 'STOCK_RETURN'
   | 'STORES_REQ'
   | 'EXPENSE_RETIREMENT'
-  | 'PURCHASE_REQ';
+  | 'PURCHASE_REQ'
+  | 'DISCIPLINARY_CHARGE'
+  | 'EDU_HEALTH_CLAIM';
 
 export interface WorkflowPipelineStep {
   step_order: number;
@@ -156,6 +158,29 @@ const REQUIRED_PAYLOAD_FIELDS: Record<FormCode, string[]> = {
     'budget_type',
     'items',
   ],
+  DISCIPLINARY_CHARGE: [
+    'charging_officer_name',
+    'charging_officer_position',
+    'charging_school',
+    'accused_name',
+    'accused_position',
+    'accused_man_no',
+    'accused_dept_school',
+    'date_of_charge',
+    'nature_of_offence',
+    'brief_account_of_offence',
+    'show_cause_in_48_hours',
+  ],
+  EDU_HEALTH_CLAIM: [
+    'employee_number',
+    'patient_first_name',
+    'patient_surname',
+    'date_of_treatment',
+    'hospital_name',
+    'symptoms_and_treatment_details',
+    'claim_items',
+    'payment_method',
+  ],
 };
 
 export function validateFormPayload(formCode: FormCode, payload: Record<string, any>): void {
@@ -203,6 +228,20 @@ export function validateFormPayload(formCode: FormCode, payload: Record<string, 
         );
       }
     });
+  }
+
+  if (formCode === 'EDU_HEALTH_CLAIM') {
+    if (!Array.isArray(payload.claim_items) || payload.claim_items.length === 0) {
+      throw new Error('At least one expense/treatment row is required in Claim Details.');
+    }
+    if (!payload.confirm_true_and_correct || !payload.consent_medical_info_processing) {
+      throw new Error('Both Section 4 medical consent and truthfulness declarations must be ticked.');
+    }
+    if (payload.payment_method === 'BANK_TRANSFER') {
+      if (!payload.bank_name || !payload.account_holder_name || !payload.account_number) {
+        throw new Error('Bank Name, Account Holder Name, and Account Number are required for Bank Transfer reimbursement.');
+      }
+    }
   }
 }
 

@@ -335,6 +335,51 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
           variance_to_budget: 0,
         });
         break;
+      case 'DISCIPLINARY_CHARGE':
+        setPayload({
+          charging_officer_name: currentUser?.full_name || '',
+          charging_officer_position: currentUser?.job_title || '',
+          charging_school: currentUser?.institution_name || '',
+          accused_name: '',
+          accused_position: '',
+          accused_man_no: '',
+          accused_dept_school: currentUser?.institution_name || '',
+          date_of_charge: new Date().toISOString().split('T')[0],
+          nature_of_offence: '',
+          brief_account_of_offence: '',
+          show_cause_in_48_hours: 'YES',
+          accused_acknowledged: false,
+        });
+        break;
+
+      case 'EDU_HEALTH_CLAIM': {
+        const parts = (currentUser?.full_name || '').trim().split(' ');
+        setPayload({
+          employee_number: currentUser?.employee_number || '',
+          patient_title: 'Mr/Ms',
+          patient_gender: 'MALE',
+          patient_first_name: parts[0] || '',
+          patient_surname: parts.slice(1).join(' ') || '',
+          mobile: '+260 ',
+          email: currentUser?.email || '',
+          treatment_categories: ['CONSULTATION'],
+          symptoms_and_treatment_details: '',
+          date_of_treatment: '',
+          hospital_name: '',
+          claim_items: [
+            { description: '', provider_name: '', amount_charged: 0, invoice_no: '' },
+          ],
+          total_claim_amount: 0,
+          payment_method: 'BANK_TRANSFER',
+          bank_name: '',
+          account_holder_name: currentUser?.full_name || '',
+          account_number: '',
+          bank_branch: '',
+          confirm_true_and_correct: true,
+          consent_medical_info_processing: true,
+        });
+        break;
+      }
     }
 
     setStep(2);
@@ -2360,8 +2405,6 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
           </div>
         );
 
-      
-
       case 'JOB_DESCRIPTION':
       default: {
         const responsibilities: string[] = Array.isArray(payload.key_responsibilities)
@@ -2451,6 +2494,559 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                   </button>
                 </div>
               ))}
+            </div>
+          </div>
+        );
+      }
+
+      case 'DISCIPLINARY_CHARGE':
+        return (
+          <div className="space-y-5">
+            {/* Charging Officer Section */}
+            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-600 block">
+                Charging Officer Details
+              </span>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Name of Charging Officer *
+                  </label>
+                  <input
+                    type="text"
+                    value={payload.charging_officer_name || ''}
+                    onChange={(e) => updateField('charging_officer_name', e.target.value)}
+                    className="w-full bg-white border rounded-lg px-3 py-2 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Position *
+                  </label>
+                  <input
+                    type="text"
+                    value={payload.charging_officer_position || ''}
+                    onChange={(e) => updateField('charging_officer_position', e.target.value)}
+                    className="w-full bg-white border rounded-lg px-3 py-2 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    School / Campus *
+                  </label>
+                  <input
+                    type="text"
+                    value={payload.charging_school || ''}
+                    onChange={(e) => updateField('charging_school', e.target.value)}
+                    className="w-full bg-white border rounded-lg px-3 py-2 text-sm"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Accused Employee Section */}
+            <div className="bg-red-50/40 p-4 rounded-xl border border-red-200 space-y-3">
+              <span className="text-xs font-bold uppercase tracking-wider text-red-700 block">
+                Accused Employee Details
+              </span>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Name of the Accused *
+                  </label>
+                  <input
+                    type="text"
+                    value={payload.accused_name || ''}
+                    onChange={(e) => updateField('accused_name', e.target.value)}
+                    className="w-full bg-white border rounded-lg px-3 py-2 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Position *
+                  </label>
+                  <input
+                    type="text"
+                    value={payload.accused_position || ''}
+                    onChange={(e) => updateField('accused_position', e.target.value)}
+                    className="w-full bg-white border rounded-lg px-3 py-2 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Man No. (Employee #) *
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g., EDC-1042"
+                    value={payload.accused_man_no || ''}
+                    onChange={(e) => updateField('accused_man_no', e.target.value)}
+                    className="w-full bg-white border rounded-lg px-3 py-2 text-sm"
+                  />
+                </div>
+                <div className="md:col-span-2">
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Dept / School *
+                  </label>
+                  <input
+                    type="text"
+                    value={payload.accused_dept_school || ''}
+                    onChange={(e) => updateField('accused_dept_school', e.target.value)}
+                    className="w-full bg-white border rounded-lg px-3 py-2 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Date of Charge *
+                  </label>
+                  <input
+                    type="date"
+                    value={payload.date_of_charge || ''}
+                    onChange={(e) => updateField('date_of_charge', e.target.value)}
+                    className="w-full bg-white border rounded-lg px-3 py-2 text-sm"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Offence Particulars */}
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-800 mb-1">
+                  1. Nature of the Offence (As per Code of Conduct) *
+                </label>
+                <textarea
+                  rows={3}
+                  value={payload.nature_of_offence || ''}
+                  onChange={(e) => updateField('nature_of_offence', e.target.value)}
+                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-800 mb-1">
+                  2. Brief Account of the Offence (As per investigation done) *
+                </label>
+                <textarea
+                  rows={4}
+                  value={payload.brief_account_of_offence || ''}
+                  onChange={(e) => updateField('brief_account_of_offence', e.target.value)}
+                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                />
+              </div>
+
+              <div className="p-4 rounded-xl bg-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <span className="text-xs font-semibold text-slate-800">
+                  Will the accused in (48) hours show cause on the attached Exculpatory Form why disciplinary action should not be taken?
+                </span>
+                <div className="flex gap-2 shrink-0">
+                  {(['YES', 'NO'] as const).map((opt) => (
+                    <button
+                      type="button"
+                      key={opt}
+                      onClick={() => updateField('show_cause_in_48_hours', opt)}
+                      className={`px-4 py-1.5 rounded-lg text-xs font-bold border ${
+                        payload.show_cause_in_48_hours === opt
+                          ? 'bg-slate-900 text-white border-slate-900'
+                          : 'bg-white text-slate-700 border-slate-300'
+                      }`}
+                    >
+                      {opt}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+
+      case 'EDU_HEALTH_CLAIM': {
+        const claimItems: any[] = payload.claim_items || [];
+        const selectedCats: string[] = payload.treatment_categories || [];
+        const allCategories = [
+          'CONSULTATION',
+          'LABORATORY',
+          'RADIOLOGY',
+          'PHARMACY',
+          'ADMISSION',
+          'OPTICAL',
+          'EMERGENCY',
+          'FOLLOW_UP',
+          'DENTAL',
+          'OTHER',
+        ];
+
+        const toggleCat = (cat: string) => {
+          const next = selectedCats.includes(cat)
+            ? selectedCats.filter((c) => c !== cat)
+            : [...selectedCats, cat];
+          updateField('treatment_categories', next);
+        };
+
+        const updateClaimRows = (nextRows: any[]) => {
+          const total = nextRows.reduce(
+            (sum, r) => sum + Number(r.amount_charged || 0),
+            0
+          );
+          setPayload((prev) => ({
+            ...prev,
+            claim_items: nextRows,
+            total_claim_amount: total,
+          }));
+        };
+
+        return (
+          <div className="space-y-6">
+            {/* 1. Member & Patient Information */}
+            <div className="space-y-3 bg-slate-50 p-4 rounded-xl border border-slate-200">
+              <span className="text-xs font-bold uppercase tracking-wider text-blue-700 block">
+                1. Member & Patient Information
+              </span>
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                    Employee Number *
+                  </label>
+                  <input
+                    type="text"
+                    value={payload.employee_number || ''}
+                    onChange={(e) => updateField('employee_number', e.target.value)}
+                    className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                    Patient Title
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Mr / Mrs / Ms / Master / Miss"
+                    value={payload.patient_title || ''}
+                    onChange={(e) => updateField('patient_title', e.target.value)}
+                    className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                    Gender *
+                  </label>
+                  <select
+                    value={payload.patient_gender || 'MALE'}
+                    onChange={(e) => updateField('patient_gender', e.target.value)}
+                    className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs"
+                  >
+                    <option value="MALE">Male</option>
+                    <option value="FEMALE">Female</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                    Mobile *
+                  </label>
+                  <input
+                    type="tel"
+                    value={payload.mobile || ''}
+                    onChange={(e) => updateField('mobile', e.target.value)}
+                    className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                    Patient First Name *
+                  </label>
+                  <input
+                    type="text"
+                    value={payload.patient_first_name || ''}
+                    onChange={(e) => updateField('patient_first_name', e.target.value)}
+                    className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                    Patient Surname *
+                  </label>
+                  <input
+                    type="text"
+                    value={payload.patient_surname || ''}
+                    onChange={(e) => updateField('patient_surname', e.target.value)}
+                    className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs"
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                    Email *
+                  </label>
+                  <input
+                    type="email"
+                    value={payload.email || ''}
+                    onChange={(e) => updateField('email', e.target.value)}
+                    className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs"
+                  />
+                </div>
+              </div>
+
+              {/* Treatment Category Multi-Select Checkboxes */}
+              <div className="pt-2">
+                <label className="block text-[11px] font-semibold text-slate-600 mb-1.5">
+                  Service / Treatment Categories (Select all that apply) *
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  {allCategories.map((cat) => {
+                    const active = selectedCats.includes(cat);
+                    return (
+                      <button
+                        type="button"
+                        key={cat}
+                        onClick={() => toggleCat(cat)}
+                        className={`px-2.5 py-1 rounded-md text-xs font-semibold border transition ${
+                          active
+                            ? 'bg-blue-600 text-white border-blue-600'
+                            : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                        }`}
+                      >
+                        {cat.replace(/_/g, ' ')}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-2">
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                    Date of Treatment * (Claims older than 90 days are invalid)
+                  </label>
+                  <input
+                    type="date"
+                    value={payload.date_of_treatment || ''}
+                    onChange={(e) => updateField('date_of_treatment', e.target.value)}
+                    className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                    Hospital / Clinic Where Treatment Occurred *
+                  </label>
+                  <input
+                    type="text"
+                    value={payload.hospital_name || ''}
+                    onChange={(e) => updateField('hospital_name', e.target.value)}
+                    className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs"
+                  />
+                </div>
+                <div className="md:col-span-2">
+                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                    Full Details of Symptoms / Medical Conditions & Treatment Received *
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={payload.symptoms_and_treatment_details || ''}
+                    onChange={(e) =>
+                      updateField('symptoms_and_treatment_details', e.target.value)
+                    }
+                    className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* 2. Claim Details Repeater Table */}
+            <div className="space-y-2">
+              <div className="flex justify-between items-center">
+                <label className="text-xs font-bold text-slate-800">
+                  2. Claim Details (Description, Provider's Name, Amount Charged, Invoice No) *
+                </label>
+                <button
+                  type="button"
+                  onClick={() =>
+                    updateClaimRows([
+                      ...claimItems,
+                      {
+                        description: '',
+                        provider_name: payload.hospital_name || '',
+                        amount_charged: 0,
+                        invoice_no: '',
+                      },
+                    ])
+                  }
+                  className="inline-flex items-center gap-1 text-xs font-semibold text-blue-600"
+                >
+                  <Plus className="w-3.5 h-3.5" /> Add Claim Line
+                </button>
+              </div>
+
+              {claimItems.map((row, idx) => (
+                <div key={idx} className="grid grid-cols-12 gap-2 items-center">
+                  <input
+                    type="text"
+                    placeholder="Description of Expense / Treatment *"
+                    value={row.description}
+                    onChange={(e) => {
+                      const next = [...claimItems];
+                      next[idx] = { ...row, description: e.target.value };
+                      updateClaimRows(next);
+                    }}
+                    className="col-span-4 border rounded-lg px-2.5 py-1.5 text-xs"
+                  />
+                  <input
+                    type="text"
+                    placeholder="Provider's Name *"
+                    value={row.provider_name}
+                    onChange={(e) => {
+                      const next = [...claimItems];
+                      next[idx] = { ...row, provider_name: e.target.value };
+                      updateClaimRows(next);
+                    }}
+                    className="col-span-3 border rounded-lg px-2.5 py-1.5 text-xs"
+                  />
+                  <input
+                    type="number"
+                    placeholder="Amount (ZMW) *"
+                    value={row.amount_charged}
+                    onChange={(e) => {
+                      const next = [...claimItems];
+                      next[idx] = { ...row, amount_charged: Number(e.target.value) };
+                      updateClaimRows(next);
+                    }}
+                    className="col-span-2 border rounded-lg px-2.5 py-1.5 text-xs"
+                  />
+                  <input
+                    type="text"
+                    placeholder="Invoice / Receipt #"
+                    value={row.invoice_no}
+                    onChange={(e) => {
+                      const next = [...claimItems];
+                      next[idx] = { ...row, invoice_no: e.target.value };
+                      updateClaimRows(next);
+                    }}
+                    className="col-span-2 border rounded-lg px-2.5 py-1.5 text-xs"
+                  />
+                  <button
+                    type="button"
+                    disabled={claimItems.length <= 1}
+                    onClick={() =>
+                      updateClaimRows(claimItems.filter((_, i) => i !== idx))
+                    }
+                    className="col-span-1 text-red-500 flex justify-center"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              ))}
+
+              <div className="p-3 rounded-lg bg-slate-100 flex justify-between items-center text-xs">
+                <span className="font-semibold text-slate-700">Total Claim Reimbursement Requested:</span>
+                <span className="text-sm font-bold text-blue-700">
+                  ZMW {Number(payload.total_claim_amount || 0).toLocaleString()}
+                </span>
+              </div>
+            </div>
+
+            {/* 3. Payment Details */}
+            <div className="space-y-3 pt-2 border-t border-slate-100">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold text-slate-800">
+                  3. Preferred Payment Method *
+                </label>
+                <div className="flex gap-2">
+                  {(
+                    [
+                      { code: 'BANK_TRANSFER', label: 'Bank Transfer' },
+                      {
+                        code: 'ADD_TOWARDS_MEMBERSHIP',
+                        label: 'Add Towards Membership',
+                      },
+                    ] as const
+                  ).map((pm) => (
+                    <button
+                      type="button"
+                      key={pm.code}
+                      onClick={() => updateField('payment_method', pm.code)}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold border ${
+                        payload.payment_method === pm.code
+                          ? 'bg-blue-600 text-white border-blue-600'
+                          : 'bg-white text-slate-700 border-slate-200'
+                      }`}
+                    >
+                      {pm.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {payload.payment_method === 'BANK_TRANSFER' && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-slate-50 p-3.5 rounded-xl border border-slate-200">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                      Bank Name *
+                    </label>
+                    <input
+                      type="text"
+                      value={payload.bank_name || ''}
+                      onChange={(e) => updateField('bank_name', e.target.value)}
+                      className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                      Account Holder Name / Payee *
+                    </label>
+                    <input
+                      type="text"
+                      value={payload.account_holder_name || ''}
+                      onChange={(e) =>
+                        updateField('account_holder_name', e.target.value)
+                      }
+                      className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                      Account Number *
+                    </label>
+                    <input
+                      type="text"
+                      value={payload.account_number || ''}
+                      onChange={(e) => updateField('account_number', e.target.value)}
+                      className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                      Bank Branch
+                    </label>
+                    <input
+                      type="text"
+                      value={payload.bank_branch || ''}
+                      onChange={(e) => updateField('bank_branch', e.target.value)}
+                      className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* 4. Mandatory Medical Consent Declarations */}
+            <div className="p-3.5 rounded-xl bg-blue-50/60 border border-blue-200 space-y-2 text-xs">
+              <label className="flex items-center gap-2 font-semibold text-slate-800 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={Boolean(payload.confirm_true_and_correct)}
+                  onChange={(e) =>
+                    updateField('confirm_true_and_correct', e.target.checked)
+                  }
+                />
+                I confirm the information given is true and correct to the best of my knowledge.
+              </label>
+              <label className="flex items-center gap-2 font-semibold text-slate-800 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={Boolean(payload.consent_medical_info_processing)}
+                  onChange={(e) =>
+                    updateField('consent_medical_info_processing', e.target.checked)
+                  }
+                />
+                I consent to Educore Services obtaining and processing medical information related to my claim.
+              </label>
             </div>
           </div>
         );

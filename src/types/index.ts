@@ -64,7 +64,9 @@ export type FormCode =
   | 'STOCK_RETURN'
   | 'STORES_REQ'
   | 'EXPENSE_RETIREMENT'
-  | 'PURCHASE_REQ';
+  | 'PURCHASE_REQ'
+  | 'DISCIPLINARY_CHARGE'
+  | 'EDU_HEALTH_CLAIM';
 
 export type CurrencyCode = 
   | 'ZMW'
@@ -91,6 +93,18 @@ export type InventoryAction =
 export type FlightBookingType = 'CONTRACT' | 'BUSINESS' | 'PRIVATE_PAYROLL_DEDUCTION';
 
 export type GroundTransferType = 'NA_OWN_TRANSPORT' | 'CAR_HIRE_SELF_DRIVE' | 'TRANSFER';
+
+export type EduHealthCategory =
+  | 'CONSULTATION'
+  | 'LABORATORY'
+  | 'RADIOLOGY'
+  | 'PHARMACY'
+  | 'ADMISSION'
+  | 'OPTICAL'
+  | 'EMERGENCY'
+  | 'FOLLOW_UP'
+  | 'DENTAL'
+  | 'OTHER';
    
 // ============================================================================
 // 2. REFERENCE CATALOG ENTITIES
@@ -448,6 +462,59 @@ export interface PurchaseReqPayload {
   variance_to_budget: number; // available_budget - total_cost
 }
 
+export interface DisciplinaryChargePayload {
+  charging_officer_name: string;
+  charging_officer_position: string;
+  charging_school: string;
+  accused_name: string;
+  accused_position: string;
+  accused_man_no: string;
+  accused_dept_school: string;
+  date_of_charge: string;
+  nature_of_offence: string;       // 1. Nature of the Offence (As per code of conduct)
+  brief_account_of_offence: string; // 2. Brief Account of the Offence (As per investigation done)
+  show_cause_in_48_hours: 'YES' | 'NO';
+  accused_acknowledged?: boolean;
+  accused_acknowledged_date?: string;
+}
+
+export interface EduHealthClaimLineItem {
+  description: string;
+  provider_name: string;
+  amount_charged: number;
+  invoice_no: string;
+}
+
+export interface EduHealthClaimPayload {
+  // 1. Member / Patient Information
+  employee_number: string;
+  patient_title: string;
+  patient_gender: 'MALE' | 'FEMALE';
+  patient_first_name: string;
+  patient_surname: string;
+  mobile: string;
+  email: string;
+  treatment_categories: EduHealthCategory[];
+  symptoms_and_treatment_details: string;
+  date_of_treatment: string;
+  hospital_name: string;
+
+  // 2. Claim Details Table
+  claim_items: EduHealthClaimLineItem[];
+  total_claim_amount: number;
+
+  // 3. Payment Details
+  payment_method: 'BANK_TRANSFER' | 'ADD_TOWARDS_MEMBERSHIP';
+  bank_name?: string;
+  account_holder_name?: string;
+  account_number?: string;
+  bank_branch?: string;
+
+  // 4. Declarations
+  confirm_true_and_correct: boolean;
+  consent_medical_info_processing: boolean;
+}
+
 export interface FormPayloadMap {
   ICT_PURCHASE: IctPurchasePayload;
   TRAVEL_REQUEST: TravelRequestPayload;
@@ -465,6 +532,8 @@ export interface FormPayloadMap {
   STORES_REQ: StoresReqPayload;
   EXPENSE_RETIREMENT: ExpenseRetirementPayload;
   PURCHASE_REQ: PurchaseReqPayload;
+  DISCIPLINARY_CHARGE: DisciplinaryChargePayload;
+  EDU_HEALTH_CLAIM: EduHealthClaimPayload;
 }
 
 // ============================================================================
