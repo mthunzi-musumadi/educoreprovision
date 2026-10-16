@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { useAppContext } from '../../context/AppContext';
 import { UserRole, ROLE_LABELS } from '../../types';
+import { motion, AnimatePresence } from 'motion/react';
 
 export interface DemoPersona {
   entraOid: string;
@@ -230,11 +231,15 @@ export const LoginView: React.FC = () => {
 
       <main className="max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-8 space-y-6 flex-1">
         {/* Executive Brand Hero Card */}
-        <div className="bg-white rounded-2xl border border-slate-200/90 shadow-xs p-6 sm:p-8 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6">
+        <div className="bg-white rounded-xl border border-slate-200/90 shadow-xs p-6 sm:p-8 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6">
           <div className="space-y-2.5 max-w-2xl">
             <div className="flex items-center gap-3">
-              <div className="w-11 h-11 rounded-xl bg-slate-900 text-white font-black text-lg flex items-center justify-center shadow-xs border border-slate-700">
-                EP
+              <div className="w-12 h-12 rounded-xl bg-slate-900 flex items-center justify-center p-1.5 shadow-xs border border-slate-800 shrink-0">
+                <img
+                  src="/logo.png"
+                  alt="Educore Provision Logo"
+                  className="w-full h-full object-contain"
+                />
               </div>
               <div>
                 <div className="flex items-center gap-2">
@@ -261,20 +266,20 @@ export const LoginView: React.FC = () => {
           <div className="flex flex-col sm:flex-row lg:flex-col items-stretch sm:items-center lg:items-end gap-2.5 shrink-0">
             <a
               href="/api/auth/login"
-              className="inline-flex items-center justify-center gap-2.5 px-4 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold shadow-xs transition"
+              className="inline-flex items-center justify-center gap-2.5 px-4 py-2.5 rounded-md bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold shadow-xs transition"
             >
-              <Lock className="w-3.5 h-3.5 text-sky-400" />
+              <Lock className="w-3.5 h-3.5 text-blue-400" />
               <span>Sign in with Microsoft Entra ID</span>
               <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
             </a>
-            <div className="flex items-center gap-1.5 text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200/80 px-3 py-1 rounded-lg font-medium">
+            <div className="flex items-center gap-1.5 text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200/80 px-3 py-1 rounded-md font-medium">
               <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
               <span>PostgreSQL `educore_app` RLS Active</span>
             </div>
           </div>
         </div>
 
-        {/* Filter Bar (Hick's Law: Chunked Role Categories + Instant Search) */}
+        {/* Role Category Filter Bar & Directory Search */}
         <div className="bg-white p-3 rounded-xl border border-slate-200/90 shadow-2xs flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
           {/* Instant Search */}
           <div className="relative flex-1 max-w-md">
@@ -300,7 +305,7 @@ export const LoginView: React.FC = () => {
           </div>
 
           {/* Segmented Category Filter */}
-          <div className="flex flex-wrap items-center gap-1 bg-slate-100 p-1 rounded-lg">
+          <div className="flex flex-wrap items-center gap-1 bg-slate-100 p-1 rounded-lg relative">
             {(
               [
                 { id: 'ALL', label: `All Personas (${DEMO_PERSONAS.length})` },
@@ -310,84 +315,101 @@ export const LoginView: React.FC = () => {
                 { id: 'EXECUTIVE_ADMIN', label: 'Executive & Admin (3)' },
               ] as const
             ).map((tab) => (
-              <button
+              <motion.button
                 key={tab.id}
                 type="button"
+                whileTap={{ scale: 0.98 }}
                 onClick={() => setCategoryFilter(tab.id)}
-                className={`px-3 py-1.5 rounded-md text-xs font-semibold transition cursor-pointer ${
+                className={`px-3 py-1.5 rounded-md text-xs font-semibold cursor-pointer relative z-0 transition-colors ${
                   categoryFilter === tab.id
-                    ? 'bg-white text-slate-900 shadow-2xs'
+                    ? 'text-slate-900'
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
+                {categoryFilter === tab.id && (
+                  <motion.div
+                    layoutId="loginCategoryPill"
+                    className="absolute inset-0 bg-white rounded-md -z-10 shadow-xs"
+                    transition={{ type: 'spring', stiffness: 400, damping: 30 }}
+                  />
+                )}
                 {tab.label}
-              </button>
+              </motion.button>
             ))}
           </div>
         </div>
 
-        {/* Persona Directory Grid (Fitts's Law: Full-Card Interactive Target, Law of Common Region) */}
+        {/* Persona Directory Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filteredPersonas.map((persona) => {
-            const initials = getInitials(persona.name);
-            return (
-              <button
-                key={persona.entraOid}
-                type="button"
-                onClick={() => setActiveEntraOid(persona.entraOid)}
-                className="corporate-card-interactive text-left p-5 rounded-xl flex flex-col justify-between gap-4 group cursor-pointer focus-visible:ring-2 focus-visible:ring-sky-600"
-              >
-                <div className="space-y-3.5 w-full">
-                  {/* Top Role Pill & Site Code Badge */}
-                  <div className="flex items-center justify-between gap-2">
-                    <span
-                      className={`px-2.5 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider border ${persona.badgeColor}`}
-                    >
-                      {ROLE_LABELS[persona.role]}
-                    </span>
-                    <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 font-mono text-[10px] font-bold border border-slate-200">
-                      {persona.siteCode}
-                    </span>
-                  </div>
-
-                  {/* Identity Block */}
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-lg bg-slate-900 text-white font-bold text-xs flex items-center justify-center shrink-0 group-hover:bg-sky-700 transition-colors">
-                      {initials}
+          <AnimatePresence mode="popLayout">
+            {filteredPersonas.map((persona) => {
+              const initials = getInitials(persona.name);
+              return (
+                <motion.button
+                  key={persona.entraOid}
+                  layout
+                  initial={{ opacity: 0, scale: 0.96 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.94 }}
+                  transition={{ duration: 0.2 }}
+                  whileHover={{ y: -3 }}
+                  whileTap={{ scale: 0.98 }}
+                  type="button"
+                  onClick={() => setActiveEntraOid(persona.entraOid)}
+                  className="corporate-card-interactive text-left p-5 rounded-xl flex flex-col justify-between gap-4 group cursor-pointer focus-visible:ring-2 focus-visible:ring-blue-600"
+                >
+                  <div className="space-y-3.5 w-full">
+                    {/* Top Role Pill & Site Code Badge */}
+                    <div className="flex items-center justify-between gap-2">
+                      <span
+                        className={`px-2.5 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider border ${persona.badgeColor}`}
+                      >
+                        {ROLE_LABELS[persona.role]}
+                      </span>
+                      <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 font-mono text-[10px] font-bold border border-slate-200">
+                        {persona.siteCode}
+                      </span>
                     </div>
-                    <div className="min-w-0 flex-1">
-                      <h3 className="text-sm font-bold text-slate-900 group-hover:text-sky-700 transition-colors truncate">
-                        {persona.name}
-                      </h3>
-                      <p className="text-xs text-slate-500 truncate">{persona.title}</p>
+
+                    {/* Identity Block */}
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-lg bg-slate-900 text-white font-bold text-xs flex items-center justify-center shrink-0 group-hover:bg-blue-700 transition-colors">
+                        {initials}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <h3 className="text-sm font-bold text-slate-900 group-hover:text-blue-700 transition-colors truncate">
+                          {persona.name}
+                        </h3>
+                        <p className="text-xs text-slate-500 truncate">{persona.title}</p>
+                      </div>
+                    </div>
+
+                    {/* Assigned Site Pill */}
+                    <div className="flex items-center gap-2 text-xs text-slate-700 bg-slate-50 px-3 py-2 rounded-lg border border-slate-200/70">
+                      <Building2 className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                      <span className="truncate font-medium">{persona.site}</span>
                     </div>
                   </div>
 
-                  {/* Assigned Site Pill */}
-                  <div className="flex items-center gap-2 text-xs text-slate-700 bg-slate-50 px-3 py-2 rounded-lg border border-slate-200/70">
-                    <Building2 className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                    <span className="truncate font-medium">{persona.site}</span>
+                  {/* Access Scope Footer */}
+                  <div className="pt-3 border-t border-slate-100 flex items-end justify-between gap-3 w-full">
+                    <p className="text-[11px] text-slate-500 leading-relaxed line-clamp-2">
+                      {persona.description}
+                    </p>
+                    <span className="inline-flex items-center gap-1 text-xs font-semibold text-blue-700 shrink-0 group-hover:translate-x-1 transition-transform">
+                      Enter <ArrowRight className="w-3.5 h-3.5" />
+                    </span>
                   </div>
-                </div>
-
-                {/* Least-Privilege Access Scope Footer */}
-                <div className="pt-3 border-t border-slate-100 flex items-end justify-between gap-3 w-full">
-                  <p className="text-[11px] text-slate-500 leading-relaxed line-clamp-2">
-                    {persona.description}
-                  </p>
-                  <span className="inline-flex items-center gap-1 text-xs font-semibold text-sky-700 shrink-0 group-hover:translate-x-0.5 transition-transform">
-                    Enter <ArrowRight className="w-3.5 h-3.5" />
-                  </span>
-                </div>
-              </button>
-            );
-          })}
+                </motion.button>
+              );
+            })}
+          </AnimatePresence>
         </div>
 
         {/* Manual Entra OID Session Binding */}
         <div className="bg-white border border-slate-200/90 rounded-xl p-4 max-w-2xl mx-auto flex flex-col sm:flex-row items-center gap-3 shadow-2xs">
           <div className="flex items-center gap-2 text-xs text-slate-600 shrink-0">
-            <KeyRound className="w-4 h-4 text-sky-600" />
+            <KeyRound className="w-4 h-4 text-blue-600" />
             <span className="font-semibold text-slate-800">Direct OID Claim Binding:</span>
           </div>
           <input
@@ -396,13 +418,13 @@ export const LoginView: React.FC = () => {
             onChange={(e) => setCustomOid(e.target.value)}
             placeholder="Paste Microsoft Entra Object ID (UUID)..."
             aria-label="Custom Microsoft Entra Object ID"
-            className="flex-1 w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs font-mono text-slate-900 focus:bg-white focus:border-sky-600 focus:outline-hidden"
+            className="flex-1 w-full bg-slate-50 border border-slate-200 rounded-md px-3 py-2 text-xs font-mono text-slate-900 focus:bg-white focus:border-blue-600 focus:outline-hidden"
           />
           <button
             type="button"
             disabled={!customOid.trim()}
             onClick={() => setActiveEntraOid(customOid.trim())}
-            className="w-full sm:w-auto px-4 py-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-xs font-semibold text-white disabled:opacity-40 shrink-0 transition cursor-pointer"
+            className="w-full sm:w-auto px-4 py-2 rounded-md bg-slate-900 hover:bg-slate-800 text-xs font-semibold text-white disabled:opacity-40 shrink-0 transition cursor-pointer"
           >
             Bind Claim
           </button>

@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import {
   Laptop,
   Plane,
@@ -23,14 +24,25 @@ import {
   StoresReqItem,
   StockReturnItem,
   ChildAdmissionEntry,
+  WorkflowApplication,
+  ApplicationAttachment,
 } from '../../types';
 import { useToast } from '../common/Toast';
+import { FileUploadZone } from '../common/FileUploadZone';
+import { validateApplicationForm } from '../../utils/formValidation';
 
 interface NewRequestStepperProps {
   onSuccess?: () => void;
   onCancel?: () => void;
   initialFormCode?: FormCode;
+  editApplication?: WorkflowApplication | null;
 }
+
+const STEP_ITEMS = [
+  { stepNum: 1 as const, label: '1. Select Form Type' },
+  { stepNum: 2 as const, label: '2. General Form Details' },
+  { stepNum: 3 as const, label: '3. Policy & Digital Signature' },
+];
 
 const DEPARTMENTS: { code: DepartmentCode | 'ALL'; label: string; icon: React.ReactNode }[] = [
   { code: 'ALL', label: 'All Departments', icon: null },
@@ -44,6 +56,7 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
   onSuccess,
   onCancel,
   initialFormCode,
+  editApplication,
 }) => {
   const {
     currentUser,
@@ -52,34 +65,113 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
     sites,
     policies,
     submitWorkflowForm,
+    updateWorkflowForm,
+    uploadAttachment,
+    deleteAttachment,
   } = useAppContext();
   const { showToast } = useToast();
 
-  const [step, setStep] = useState<1 | 2 | 3>(initialFormCode ? 2 : 1);
+  const [step, setStep] = useState<1 | 2 | 3>(editApplication || initialFormCode ? 2 : 1);
   const [selectedDept, setSelectedDept] = useState<DepartmentCode | 'ALL'>('ALL');
-  const [selectedFormCode, setSelectedFormCode] = useState<FormCode>(
-    initialFormCode || 'ICT_PURCHASE'
+  const [selectedFormCode, setSelectedFormCode] = useState<FormCode | null>(
+    editApplication?.form_code || initialFormCode || null
   );
 
-  const [payload, setPayload] = useState<Record<string, any>>({
-    repayment_period: 'TWELVE_MONTHS',
-    account_type: 'CURRENT',
-    transport_mode: 'VEHICLE',
-    employment_type: 'FIXED_TERM',
-    items: [],
-    children: [],
-    key_responsibilities: [''],
+  const [payload, setPayload] = useState<Record<string, any>>(() => {
+    if (editApplication?.payload) {
+      return { ...editApplication.payload };
+    }
+    return {
+      repayment_period: 'TWELVE_MONTHS',
+      account_type: 'CURRENT',
+      transport_mode: 'VEHICLE',
+      employment_type: 'FIXED_TERM',
+      items: [],
+      children: [],
+      key_responsibilities: [''],
+    };
   });
 
-  const [termsAccepted, setTermsAccepted] = useState(false);
-  const [digitalSignature, setDigitalSignature] = useState(currentUser?.full_name || '');
+  const [attachments, setAttachments] = useState<ApplicationAttachment[]>(
+    editApplication?.attachments || []
+  );
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const [termsAccepted, setTermsAccepted] = useState(editApplication?.terms_accepted || false);
+  const [digitalSignature, setDigitalSignature] = useState(
+    editApplication?.applicant_digital_signature || currentUser?.full_name || ''
+  );
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [hasAttemptedProceed, setHasAttemptedProceed] = useState(false);
 
   const selectedForm: FormDefinition | undefined = useMemo(
-    () => formDefinitions.find((f) => f.code === selectedFormCode),
+    () => (selectedFormCode ? formDefinitions.find((f) => f.code === selectedFormCode) : undefined),
     [formDefinitions, selectedFormCode]
   );
+
+  const isStep2Complete = useMemo(() => {
+    if (!selectedFormCode) return false;
+    return validateApplicationForm(selectedFormCode, payload).isValid;
+  }, [selectedFormCode, payload]);
+
+  const canGoBackTo = (targetStep: 1 | 2 | 3): boolean => {
+    // Only permitted to go backwards
+    if (targetStep >= step) return false;
+
+    if (targetStep === 1) {
+      // Must have selected a form and not editing an existing application
+      return Boolean(selectedFormCode) && !editApplication;
+    }
+
+    if (targetStep === 2) {
+      // Allowed to go back to General Form Details from Step 3
+      return step === 3 && Boolean(selectedFormCode);
+    }
+
+    return false;
+  };
+
+  const handleGoBackToStep1 = () => {
+    setSubmitError(null);
+    setFieldErrors({});
+    setHasAttemptedProceed(false);
+    setSelectedFormCode(null);
+    setStep(1);
+  };
+
+  const handleContinueToSignoff = () => {
+    if (!selectedFormCode) {
+      showToast('error', 'Form Required', 'Please select a form type before proceeding.');
+      return;
+    }
+    setHasAttemptedProceed(true);
+    const validation = validateApplicationForm(selectedFormCode, payload);
+    if (!validation.isValid) {
+      setFieldErrors(validation.errors);
+      const firstMsg = validation.firstErrorKey ? validation.errors[validation.firstErrorKey] : undefined;
+      const msg = firstMsg || validation.summaryMessage || 'Please complete all required fields before proceeding.';
+      setSubmitError(msg);
+      showToast('error', 'Incomplete Form Details', msg);
+      const errKey = validation.firstErrorKey;
+      if (errKey) {
+        setTimeout(() => {
+          const el =
+            document.querySelector(`[data-field="${errKey}"]`) ||
+            document.querySelector(`[name="${errKey}"]`) ||
+            document.getElementById(errKey);
+          if (el) {
+            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            (el as HTMLElement).focus?.();
+          }
+        }, 50);
+      }
+      return;
+    }
+    setFieldErrors({});
+    setSubmitError(null);
+    setStep(3);
+  };
 
   const activePolicy = useMemo(() => {
     if (!selectedForm?.requires_policy) return null;
@@ -95,8 +187,57 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
     return formDefinitions.filter((f) => f.department === selectedDept);
   }, [formDefinitions, selectedDept]);
 
+  const clearFieldError = (key: string) => {
+    setFieldErrors((prev) => {
+      if (!prev[key]) return prev;
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+  };
+
+  const clearFieldErrors = (...keys: string[]) => {
+    setFieldErrors((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const k of keys) {
+        if (next[k]) {
+          delete next[k];
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  };
+
   const updateField = (key: string, value: any) => {
     setPayload((prev) => ({ ...prev, [key]: value }));
+    clearFieldError(key);
+  };
+
+  const getInputClass = (fieldName: string, baseClasses = 'w-full border rounded-lg px-3 py-2 text-sm') => {
+    const hasError = Boolean(fieldErrors[fieldName]);
+    const cleanBase = baseClasses
+      .replace(/border-(slate|gray|zinc|neutral)-[0-9]+/g, '')
+      .replace(/focus:border-(blue|indigo|sky)-[0-9]+/g, '')
+      .replace(/focus:ring-[a-z0-9-]+/g, '')
+      .trim();
+
+    if (hasError) {
+      return `${cleanBase} border-red-500 focus:border-red-500 focus:ring-1 focus:ring-red-500 bg-red-50/20`.trim();
+    }
+    return `${cleanBase} border-slate-300 focus:border-blue-500 focus:ring-1 focus:ring-blue-500`.trim();
+  };
+
+  const renderFieldError = (fieldName: string) => {
+    const err = fieldErrors[fieldName];
+    if (!err) return null;
+    return (
+      <p className="mt-1 text-xs text-red-600 font-medium flex items-center gap-1">
+        <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+        <span>{err}</span>
+      </p>
+    );
   };
 
   const handleIctSelection = (tierId: string, repaymentPeriod: RepaymentPlan) => {
@@ -115,11 +256,14 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
       repayment_period: repaymentPeriod,
       estimated_monthly_amount_zmw: monthly,
     }));
+    clearFieldErrors('equipment_tier_id', 'repayment_period', 'estimated_monthly_amount_zmw');
   };
 
   const handleSelectForm = (form: FormDefinition) => {
     setSelectedFormCode(form.code);
     setSubmitError(null);
+    setFieldErrors({});
+    setHasAttemptedProceed(false);
 
     const defaultSiteId = sites[0]?.id || currentUser?.site_id || '';
 
@@ -453,20 +597,91 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
     setSubmitting(true);
     setSubmitError(null);
 
+    if (submitImmediately) {
+      const validation = validateApplicationForm(selectedForm.code, payload);
+      if (!validation.isValid) {
+        setFieldErrors(validation.errors);
+        setHasAttemptedProceed(true);
+        const firstMsg = validation.firstErrorKey ? validation.errors[validation.firstErrorKey] : undefined;
+        const msg = firstMsg || validation.summaryMessage || 'Please complete all required fields before submitting.';
+        setSubmitError(msg);
+        showToast('error', 'Incomplete Form Details', msg);
+        setStep(2);
+        setSubmitting(false);
+        const errKey = validation.firstErrorKey;
+        if (errKey) {
+          setTimeout(() => {
+            const el =
+              document.querySelector(`[data-field="${errKey}"]`) ||
+              document.querySelector(`[name="${errKey}"]`) ||
+              document.getElementById(errKey);
+            if (el) {
+              el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              (el as HTMLElement).focus?.();
+            }
+          }, 50);
+        }
+        return;
+      }
+
+      if (!digitalSignature.trim()) {
+        const msg = 'Digital signature is required to sign and submit.';
+        setSubmitError(msg);
+        showToast('error', 'Signature Required', msg);
+        setSubmitting(false);
+        return;
+      }
+
+      if (selectedForm.requires_policy && !termsAccepted) {
+        const msg = 'You must accept the institutional policy declaration before submitting.';
+        setSubmitError(msg);
+        showToast('error', 'Policy Acceptance Required', msg);
+        setSubmitting(false);
+        return;
+      }
+    }
+
     try {
-      await submitWorkflowForm({
-        formCode: selectedForm.code,
-        payload: payload as any,
-        submitImmediately,
-        policyVersionId: activePolicy?.id,
-        termsAccepted: selectedForm.requires_policy ? termsAccepted : true,
-        digitalSignature: digitalSignature.trim() || currentUser?.full_name,
-      });
-      showToast(
-        'success',
-        submitImmediately ? 'Application Submitted' : 'Draft Saved',
-        `Your ${selectedForm.title} has been recorded in the workflow engine.`
-      );
+      let resultApp: any;
+      if (editApplication) {
+        resultApp = await updateWorkflowForm({
+          applicationId: editApplication.id,
+          payload: payload as any,
+          submitImmediately,
+          termsAccepted: selectedForm.requires_policy ? termsAccepted : true,
+          digitalSignature: digitalSignature.trim() || currentUser?.full_name,
+        });
+        showToast(
+          'success',
+          submitImmediately ? 'Application Resubmitted' : 'Draft Saved',
+          `Your changes to ${selectedForm.title} have been saved.`
+        );
+      } else {
+        resultApp = await submitWorkflowForm({
+          formCode: selectedForm.code,
+          payload: payload as any,
+          submitImmediately,
+          policyVersionId: activePolicy?.id,
+          termsAccepted: selectedForm.requires_policy ? termsAccepted : true,
+          digitalSignature: digitalSignature.trim() || currentUser?.full_name,
+        });
+        showToast(
+          'success',
+          submitImmediately ? 'Application Submitted' : 'Draft Saved',
+          `Your ${selectedForm.title} has been recorded in the workflow engine.`
+        );
+      }
+
+      if (pendingFiles.length > 0 && resultApp?.id) {
+        for (const file of pendingFiles) {
+          try {
+            await uploadAttachment(resultApp.id, file);
+          } catch (e) {
+            console.error('Failed to attach document:', e);
+          }
+        }
+      }
+
       onSuccess?.();
     } catch (err: any) {
       setSubmitError(err.message || 'Failed to submit application');
@@ -479,6 +694,7 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
   // STEP 2: POLYMORPHIC FORM FIELD RENDERER (ALL 14 FORMS)
   // ==========================================================================
   const renderFormFields = () => {
+    if (!selectedFormCode) return null;
     switch (selectedFormCode) {
       case 'ICT_PURCHASE':
         return (
@@ -487,13 +703,21 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
               <label className="block text-sm font-semibold text-slate-700 mb-2">
                 Select Laptop Tier *
               </label>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div
+                data-field="equipment_tier_id"
+                className={`grid grid-cols-1 md:grid-cols-2 gap-4 ${
+                  fieldErrors.equipment_tier_id ? 'p-2 rounded-xl border border-red-400 bg-red-50/20' : ''
+                }`}
+              >
                 {equipmentTiers.map((tier) => {
                   const selected = payload.equipment_tier_id === tier.id;
                   return (
-                    <button
+                    <motion.button
                       type="button"
                       key={tier.id}
+                      whileHover={{ scale: 1.012, y: -1 }}
+                      whileTap={{ scale: 0.988 }}
+                      transition={{ type: 'spring', stiffness: 400, damping: 25 }}
                       onClick={() =>
                         handleIctSelection(
                           tier.id,
@@ -502,7 +726,7 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                       }
                       className={`text-left p-4 rounded-xl border-2 transition ${
                         selected
-                          ? 'border-blue-600 bg-blue-50/40'
+                          ? 'border-blue-600 bg-blue-50/40 shadow-xs'
                           : 'border-slate-200 hover:border-slate-300'
                       }`}
                     >
@@ -519,17 +743,23 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                           RAM/Storage: {tier.ram} / {tier.storage}
                         </div>
                       </div>
-                    </button>
+                    </motion.button>
                   );
                 })}
               </div>
+              {renderFieldError('equipment_tier_id')}
             </div>
 
             <div>
               <label className="block text-sm font-semibold text-slate-700 mb-2">
                 Repayment Period *
               </label>
-              <div className="grid grid-cols-3 gap-3">
+              <div
+                data-field="repayment_period"
+                className={`grid grid-cols-3 gap-3 ${
+                  fieldErrors.repayment_period ? 'p-2 rounded-xl border border-red-400 bg-red-50/20' : ''
+                }`}
+              >
                 {(
                   [
                     { code: 'ONE_TO_TWO_MONTHS', label: '1 - 2 Months' },
@@ -551,6 +781,7 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                   </button>
                 ))}
               </div>
+              {renderFieldError('repayment_period')}
             </div>
 
             <div className="p-4 rounded-lg bg-slate-100 flex justify-between items-center">
@@ -561,6 +792,7 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                 ZMW {Number(payload.estimated_monthly_amount_zmw || 0).toLocaleString()} / mo
               </span>
             </div>
+            {renderFieldError('estimated_monthly_amount_zmw')}
           </div>
         );
 
@@ -577,11 +809,13 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                 </label>
                 <input
                   type="text"
+                  data-field="academic_year"
                   placeholder="e.g., 2026 / 2027"
                   value={payload.academic_year || ''}
                   onChange={(e) => updateField('academic_year', e.target.value)}
-                  className="w-full bg-white border rounded-lg px-3 py-2 text-sm"
+                  className={getInputClass('academic_year', 'w-full bg-white border rounded-lg px-3 py-2 text-sm')}
                 />
+                {renderFieldError('academic_year')}
               </div>
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
@@ -598,17 +832,17 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
             </div>
 
             {/* Multi-Child Repeater Section */}
-            <div className="space-y-3">
+            <div className="space-y-3" data-field="children">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <Users className="w-4 h-4 text-blue-600" />
                   <span className="text-sm font-bold text-slate-800">
-                    Children for Admission / Fee Rebate Authorisation ({children.length})
+                    Children for Admission / Fee Rebate Authorisation ({children.length}) *
                   </span>
                 </div>
                 <button
                   type="button"
-                  onClick={() =>
+                  onClick={() => {
                     updateField('children', [
                       ...children,
                       {
@@ -619,13 +853,15 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                         admission_term: 'TERM_1',
                         fee_rebate_percentage: 75,
                       } as ChildAdmissionEntry,
-                    ])
-                  }
+                    ]);
+                    clearFieldError('children');
+                  }}
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 text-xs font-bold transition"
                 >
                   <Plus className="w-3.5 h-3.5" /> Add Another Child
                 </button>
               </div>
+              {renderFieldError('children')}
 
               <div className="space-y-3">
                 {children.map((child, idx) => (
@@ -660,15 +896,18 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                         </label>
                         <input
                           type="text"
+                          data-field={`child_${idx}_child_full_name`}
                           placeholder="Full Legal Name"
                           value={child.child_full_name}
                           onChange={(e) => {
                             const next = [...children];
                             next[idx] = { ...child, child_full_name: e.target.value };
                             updateField('children', next);
+                            clearFieldErrors(`child_${idx}_child_full_name`, 'children');
                           }}
-                          className="w-full border rounded-lg px-2.5 py-1.5 text-xs"
+                          className={getInputClass(`child_${idx}_child_full_name`, 'w-full border rounded-lg px-2.5 py-1.5 text-xs')}
                         />
+                        {renderFieldError(`child_${idx}_child_full_name`)}
                       </div>
 
                       <div>
@@ -677,14 +916,17 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                         </label>
                         <input
                           type="date"
+                          data-field={`child_${idx}_date_of_birth`}
                           value={child.date_of_birth}
                           onChange={(e) => {
                             const next = [...children];
                             next[idx] = { ...child, date_of_birth: e.target.value };
                             updateField('children', next);
+                            clearFieldErrors(`child_${idx}_date_of_birth`, 'children');
                           }}
-                          className="w-full border rounded-lg px-2.5 py-1.5 text-xs"
+                          className={getInputClass(`child_${idx}_date_of_birth`, 'w-full border rounded-lg px-2.5 py-1.5 text-xs')}
                         />
+                        {renderFieldError(`child_${idx}_date_of_birth`)}
                       </div>
 
                       <div>
@@ -692,13 +934,15 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                           Target Educore Site *
                         </label>
                         <select
+                          data-field={`child_${idx}_target_site_id`}
                           value={child.target_site_id}
                           onChange={(e) => {
                             const next = [...children];
                             next[idx] = { ...child, target_site_id: e.target.value };
                             updateField('children', next);
+                            clearFieldErrors(`child_${idx}_target_site_id`, 'children');
                           }}
-                          className="w-full border rounded-lg px-2.5 py-1.5 text-xs"
+                          className={getInputClass(`child_${idx}_target_site_id`, 'w-full border rounded-lg px-2.5 py-1.5 text-xs')}
                         >
                           {sites.map((inst) => (
                             <option key={inst.id} value={inst.id}>
@@ -706,6 +950,7 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                             </option>
                           ))}
                         </select>
+                        {renderFieldError(`child_${idx}_target_site_id`)}
                       </div>
 
                       <div>
@@ -714,15 +959,18 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                         </label>
                         <input
                           type="text"
+                          data-field={`child_${idx}_year_group`}
                           placeholder="e.g., Year 5 / Grade 8"
                           value={child.year_group}
                           onChange={(e) => {
                             const next = [...children];
                             next[idx] = { ...child, year_group: e.target.value };
                             updateField('children', next);
+                            clearFieldErrors(`child_${idx}_year_group`, 'children');
                           }}
-                          className="w-full border rounded-lg px-2.5 py-1.5 text-xs"
+                          className={getInputClass(`child_${idx}_year_group`, 'w-full border rounded-lg px-2.5 py-1.5 text-xs')}
                         />
+                        {renderFieldError(`child_${idx}_year_group`)}
                       </div>
 
                       <div>
@@ -802,11 +1050,13 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                 </label>
                 <input
                   type="text"
+                  data-field="cost_code"
                   placeholder="e.g., TRD-ACAD-2026"
                   value={payload.cost_code || ''}
                   onChange={(e) => updateField('cost_code', e.target.value)}
-                  className="w-full bg-white border rounded-lg px-3 py-2 text-sm"
+                  className={getInputClass('cost_code', 'w-full bg-white border rounded-lg px-3 py-2 text-sm')}
                 />
+                {renderFieldError('cost_code')}
               </div>
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
@@ -814,11 +1064,13 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                 </label>
                 <input
                   type="tel"
+                  data-field="contact_number"
                   placeholder="+260 96..."
                   value={payload.contact_number || ''}
                   onChange={(e) => updateField('contact_number', e.target.value)}
-                  className="w-full bg-white border rounded-lg px-3 py-2 text-sm"
+                  className={getInputClass('contact_number', 'w-full bg-white border rounded-lg px-3 py-2 text-sm')}
                 />
+                {renderFieldError('contact_number')}
               </div>
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
@@ -826,10 +1078,12 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                 </label>
                 <input
                   type="text"
+                  data-field="site"
                   value={payload.site || ''}
                   onChange={(e) => updateField('site', e.target.value)}
-                  className="w-full bg-white border rounded-lg px-3 py-2 text-sm"
+                  className={getInputClass('site', 'w-full bg-white border rounded-lg px-3 py-2 text-sm')}
                 />
+                {renderFieldError('site')}
               </div>
               <div className="md:col-span-3">
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
@@ -837,16 +1091,18 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                 </label>
                 <input
                   type="text"
+                  data-field="reason_for_travel"
                   placeholder="Official business purpose or contract travel entitlement"
                   value={payload.reason_for_travel || ''}
                   onChange={(e) => updateField('reason_for_travel', e.target.value)}
-                  className="w-full bg-white border rounded-lg px-3 py-2 text-sm"
+                  className={getInputClass('reason_for_travel', 'w-full bg-white border rounded-lg px-3 py-2 text-sm')}
                 />
+                {renderFieldError('reason_for_travel')}
               </div>
             </div>
 
             {/* 2. Passengers' Details Repeater */}
-            <div className="space-y-2">
+            <div className="space-y-2" data-field="passengers">
               <div className="flex justify-between items-center">
                 <div>
                   <label className="text-xs font-bold text-slate-800 block">
@@ -858,41 +1114,47 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                 </div>
                 <button
                   type="button"
-                  onClick={() =>
+                  onClick={() => {
                     updateField('passengers', [
                       ...passengers,
                       { surname: '', first_name: '', gender: 'MALE', date_of_birth: '' },
-                    ])
-                  }
+                    ]);
+                    clearFieldError('passengers');
+                  }}
                   className="inline-flex items-center gap-1 text-xs font-semibold text-blue-600 hover:text-blue-800"
                 >
                   <Plus className="w-3.5 h-3.5" /> Add Passenger
                 </button>
               </div>
+              {renderFieldError('passengers')}
 
               {passengers.map((p, idx) => (
                 <div key={idx} className="grid grid-cols-12 gap-2 items-center">
                   <input
                     type="text"
+                    data-field={`passenger_${idx}_surname`}
                     placeholder="Surname *"
                     value={p.surname}
                     onChange={(e) => {
                       const next = [...passengers];
                       next[idx] = { ...p, surname: e.target.value };
                       updateField('passengers', next);
+                      clearFieldErrors(`passenger_${idx}_surname`, 'passengers');
                     }}
-                    className="col-span-4 border rounded-lg px-2.5 py-1.5 text-xs"
+                    className={getInputClass(`passenger_${idx}_surname`, 'col-span-4 border rounded-lg px-2.5 py-1.5 text-xs')}
                   />
                   <input
                     type="text"
+                    data-field={`passenger_${idx}_first_name`}
                     placeholder="First Name *"
                     value={p.first_name}
                     onChange={(e) => {
                       const next = [...passengers];
                       next[idx] = { ...p, first_name: e.target.value };
                       updateField('passengers', next);
+                      clearFieldErrors(`passenger_${idx}_first_name`, 'passengers');
                     }}
-                    className="col-span-4 border rounded-lg px-2.5 py-1.5 text-xs"
+                    className={getInputClass(`passenger_${idx}_first_name`, 'col-span-4 border rounded-lg px-2.5 py-1.5 text-xs')}
                   />
                   <select
                     value={p.gender}
@@ -909,14 +1171,16 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                   </select>
                   <input
                     type="date"
+                    data-field={`passenger_${idx}_date_of_birth`}
                     title="Date of Birth"
                     value={p.date_of_birth}
                     onChange={(e) => {
                       const next = [...passengers];
                       next[idx] = { ...p, date_of_birth: e.target.value };
                       updateField('passengers', next);
+                      clearFieldErrors(`passenger_${idx}_date_of_birth`, 'passengers');
                     }}
-                    className="col-span-1 border rounded-lg px-1.5 py-1.5 text-xs"
+                    className={getInputClass(`passenger_${idx}_date_of_birth`, 'col-span-1 border rounded-lg px-1.5 py-1.5 text-xs')}
                   />
                   <button
                     type="button"
@@ -938,7 +1202,7 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                 <label className="text-xs font-bold text-slate-800">
                   Flight Details & Booking Type *
                 </label>
-                <div className="flex flex-wrap gap-2">
+                <div className="flex flex-wrap gap-2" data-field="flight_booking_type">
                   {(
                     [
                       { code: 'CONTRACT', label: 'Contract' },
@@ -952,7 +1216,10 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                     <button
                       type="button"
                       key={ft.code}
-                      onClick={() => updateField('flight_booking_type', ft.code)}
+                      onClick={() => {
+                        updateField('flight_booking_type', ft.code);
+                        clearFieldError('flight_booking_type');
+                      }}
                       className={`px-3 py-1 rounded-lg text-xs font-semibold border transition ${
                         payload.flight_booking_type === ft.code
                           ? 'bg-blue-600 text-white border-blue-600'
@@ -964,6 +1231,7 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                   ))}
                 </div>
               </div>
+              {renderFieldError('flight_booking_type')}
 
               <div className="space-y-2">
                 <div className="flex justify-between items-center">
@@ -1078,36 +1346,42 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3 bg-slate-50 p-3.5 rounded-xl border border-slate-200">
                   <div>
                     <label className="block text-[11px] font-semibold text-slate-600 mb-1">
-                      Hotel Name
+                      Hotel Name *
                     </label>
                     <input
                       type="text"
+                      data-field="hotel_name"
                       value={payload.hotel_name || ''}
                       onChange={(e) => updateField('hotel_name', e.target.value)}
-                      className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs"
+                      className={getInputClass('hotel_name', 'w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs')}
                     />
+                    {renderFieldError('hotel_name')}
                   </div>
                   <div>
                     <label className="block text-[11px] font-semibold text-slate-600 mb-1">
-                      Check-In Date & Time
+                      Check-In Date & Time *
                     </label>
                     <input
                       type="datetime-local"
+                      data-field="check_in_datetime"
                       value={payload.check_in_datetime || ''}
                       onChange={(e) => updateField('check_in_datetime', e.target.value)}
-                      className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs"
+                      className={getInputClass('check_in_datetime', 'w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs')}
                     />
+                    {renderFieldError('check_in_datetime')}
                   </div>
                   <div>
                     <label className="block text-[11px] font-semibold text-slate-600 mb-1">
-                      Check-Out Date
+                      Check-Out Date *
                     </label>
                     <input
                       type="date"
+                      data-field="check_out_date"
                       value={payload.check_out_date || ''}
                       onChange={(e) => updateField('check_out_date', e.target.value)}
-                      className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs"
+                      className={getInputClass('check_out_date', 'w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs')}
                     />
+                    {renderFieldError('check_out_date')}
                   </div>
                 </div>
               )}
@@ -1190,11 +1464,13 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                 </label>
                 <input
                   type="text"
+                  data-field="position"
                   value={payload.position || ''}
                   onChange={(e) => updateField('position', e.target.value)}
-                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  className={getInputClass('position', 'w-full border rounded-lg px-3 py-2 text-sm')}
                   placeholder="e.g., Senior Secondary Teacher"
                 />
+                {renderFieldError('position')}
               </div>
 
               <div>
@@ -1203,6 +1479,7 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                 </label>
                 <input
                   type="number"
+                  data-field="amount_requested_zmw"
                   min={1}
                   value={payload.amount_requested_zmw ?? payload.requested_amount_zmw ?? ''}
                   onChange={(e) => {
@@ -1210,9 +1487,10 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                     updateField('amount_requested_zmw', val);
                     updateField('requested_amount_zmw', val);
                   }}
-                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  className={getInputClass('amount_requested_zmw', 'w-full border rounded-lg px-3 py-2 text-sm')}
                   placeholder="Amount in Kwacha"
                 />
+                {renderFieldError('amount_requested_zmw')}
               </div>
 
               <div className="md:col-span-2">
@@ -1221,11 +1499,13 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                 </label>
                 <textarea
                   rows={3}
+                  data-field="reason"
                   value={payload.reason || ''}
                   onChange={(e) => updateField('reason', e.target.value)}
-                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  className={getInputClass('reason', 'w-full border rounded-lg px-3 py-2 text-sm')}
                   placeholder="State detailed reason for advance..."
                 />
+                {renderFieldError('reason')}
               </div>
 
               <div>
@@ -1234,10 +1514,12 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                 </label>
                 <input
                   type="date"
+                  data-field="requested_payment_date"
                   value={payload.requested_payment_date || ''}
                   onChange={(e) => updateField('requested_payment_date', e.target.value)}
-                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  className={getInputClass('requested_payment_date', 'w-full border rounded-lg px-3 py-2 text-sm')}
                 />
+                {renderFieldError('requested_payment_date')}
               </div>
 
               <div>
@@ -1246,12 +1528,14 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                 </label>
                 <input
                   type="number"
+                  data-field="proposed_instalment_zmw"
                   min={1}
                   value={payload.proposed_instalment_zmw || ''}
                   onChange={(e) => updateField('proposed_instalment_zmw', Number(e.target.value))}
-                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  className={getInputClass('proposed_instalment_zmw', 'w-full border rounded-lg px-3 py-2 text-sm')}
                   placeholder="Monthly instalment in Kwacha"
                 />
+                {renderFieldError('proposed_instalment_zmw')}
               </div>
 
               <div>
@@ -1260,10 +1544,12 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                 </label>
                 <input
                   type="month"
+                  data-field="repayment_period_from"
                   value={payload.repayment_period_from || ''}
                   onChange={(e) => updateField('repayment_period_from', e.target.value)}
-                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  className={getInputClass('repayment_period_from', 'w-full border rounded-lg px-3 py-2 text-sm')}
                 />
+                {renderFieldError('repayment_period_from')}
               </div>
 
               <div>
@@ -1272,10 +1558,12 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                 </label>
                 <input
                   type="month"
+                  data-field="repayment_period_to"
                   value={payload.repayment_period_to || ''}
                   onChange={(e) => updateField('repayment_period_to', e.target.value)}
-                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  className={getInputClass('repayment_period_to', 'w-full border rounded-lg px-3 py-2 text-sm')}
                 />
+                {renderFieldError('repayment_period_to')}
               </div>
             </div>
 
@@ -1301,11 +1589,13 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                 </label>
                 <input
                   type="text"
+                  data-field="position"
                   value={payload.position || ''}
                   onChange={(e) => updateField('position', e.target.value)}
-                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  className={getInputClass('position', 'w-full border rounded-lg px-3 py-2 text-sm')}
                   placeholder="e.g., Facilities Supervisor"
                 />
+                {renderFieldError('position')}
               </div>
 
               <div>
@@ -1314,10 +1604,12 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                 </label>
                 <input
                   type="date"
+                  data-field="contract_end_date"
                   value={payload.contract_end_date || ''}
                   onChange={(e) => updateField('contract_end_date', e.target.value)}
-                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  className={getInputClass('contract_end_date', 'w-full border rounded-lg px-3 py-2 text-sm')}
                 />
+                {renderFieldError('contract_end_date')}
               </div>
 
               <div>
@@ -1326,6 +1618,7 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                 </label>
                 <input
                   type="number"
+                  data-field="amount_requested_zmw"
                   min={1}
                   value={payload.amount_requested_zmw ?? payload.requested_amount_zmw ?? ''}
                   onChange={(e) => {
@@ -1333,9 +1626,10 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                     updateField('amount_requested_zmw', val);
                     updateField('requested_amount_zmw', val);
                   }}
-                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  className={getInputClass('amount_requested_zmw', 'w-full border rounded-lg px-3 py-2 text-sm')}
                   placeholder="Requested advance amount"
                 />
+                {renderFieldError('amount_requested_zmw')}
               </div>
 
               <div>
@@ -1344,12 +1638,14 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                 </label>
                 <input
                   type="number"
+                  data-field="annual_gratuity_accrued_zmw"
                   min={1}
                   value={payload.annual_gratuity_accrued_zmw || ''}
                   onChange={(e) => updateField('annual_gratuity_accrued_zmw', Number(e.target.value))}
-                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  className={getInputClass('annual_gratuity_accrued_zmw', 'w-full border rounded-lg px-3 py-2 text-sm')}
                   placeholder="Total accrued gratuity to date"
                 />
+                {renderFieldError('annual_gratuity_accrued_zmw')}
               </div>
 
               <div className="md:col-span-2">
@@ -1358,11 +1654,13 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                 </label>
                 <textarea
                   rows={3}
+                  data-field="reason"
                   value={payload.reason || ''}
                   onChange={(e) => updateField('reason', e.target.value)}
-                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  className={getInputClass('reason', 'w-full border rounded-lg px-3 py-2 text-sm')}
                   placeholder="State detailed reason for gratuity advance..."
                 />
+                {renderFieldError('reason')}
               </div>
             </div>
 
@@ -1388,13 +1686,15 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                   </label>
                   <input
                     type="text"
+                    data-field="dept_or_site"
                     value={payload.dept_or_site ?? payload.dept_or_school ?? ''}
                     onChange={(e) => {
                       updateField('dept_or_site', e.target.value);
                       updateField('dept_or_school', e.target.value);
                     }}
-                    className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs"
+                    className={getInputClass('dept_or_site', 'w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs')}
                   />
+                  {renderFieldError('dept_or_site')}
                 </div>
                 <div>
                   <label className="block text-[11px] font-semibold text-slate-600 mb-1">
@@ -1402,10 +1702,12 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                   </label>
                   <input
                     type="tel"
+                    data-field="phone"
                     value={payload.phone || ''}
                     onChange={(e) => updateField('phone', e.target.value)}
-                    className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs"
+                    className={getInputClass('phone', 'w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs')}
                   />
+                  {renderFieldError('phone')}
                 </div>
                 <div>
                   <label className="block text-[11px] font-semibold text-slate-600 mb-1">
@@ -1413,10 +1715,12 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                   </label>
                   <input
                     type="date"
+                    data-field="date_of_birth"
                     value={payload.date_of_birth || ''}
                     onChange={(e) => updateField('date_of_birth', e.target.value)}
-                    className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs"
+                    className={getInputClass('date_of_birth', 'w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs')}
                   />
+                  {renderFieldError('date_of_birth')}
                 </div>
                 <div>
                   <label className="block text-[11px] font-semibold text-slate-600 mb-1">
@@ -1439,11 +1743,13 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                   </label>
                   <input
                     type="text"
+                    data-field="nrc_or_passport"
                     value={payload.nrc_or_passport || ''}
                     onChange={(e) => updateField('nrc_or_passport', e.target.value)}
                     placeholder="e.g. 123456/10/1 or ZM123456"
-                    className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs"
+                    className={getInputClass('nrc_or_passport', 'w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs')}
                   />
+                  {renderFieldError('nrc_or_passport')}
                 </div>
               </div>
             </div>
@@ -1463,14 +1769,16 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                   </label>
                   <input
                     type="text"
+                    data-field="old_bank_name"
                     value={payload.old_bank_name || ''}
                     onChange={(e) => {
                       updateField('old_bank_name', e.target.value);
                       if (!payload.bank_name) updateField('bank_name', e.target.value);
                     }}
                     placeholder="e.g., Barclays / Absa Bank"
-                    className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs"
+                    className={getInputClass('old_bank_name', 'w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs')}
                   />
+                  {renderFieldError('old_bank_name')}
                 </div>
                 <div>
                   <label className="block text-[11px] font-semibold text-slate-700 mb-1">
@@ -1478,13 +1786,15 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                   </label>
                   <input
                     type="text"
+                    data-field="old_account_number"
                     value={payload.old_account_number || ''}
                     onChange={(e) => {
                       updateField('old_account_number', e.target.value);
                       if (!payload.account_number) updateField('account_number', e.target.value);
                     }}
-                    className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs"
+                    className={getInputClass('old_account_number', 'w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs')}
                   />
+                  {renderFieldError('old_account_number')}
                 </div>
                 <div>
                   <label className="block text-[11px] font-semibold text-slate-700 mb-1">
@@ -1557,14 +1867,16 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                     </label>
                     <input
                       type="text"
+                      data-field="zmw_bank_name"
                       value={payload.zmw_bank_name || ''}
                       onChange={(e) => {
                         updateField('zmw_bank_name', e.target.value);
                         updateField('bank_name', e.target.value);
                       }}
                       placeholder="e.g., Stanbic Bank Zambia"
-                      className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs"
+                      className={getInputClass('zmw_bank_name', 'w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs')}
                     />
+                    {renderFieldError('zmw_bank_name')}
                   </div>
                   <div>
                     <label className="block text-[11px] font-semibold text-slate-700 mb-1">
@@ -1572,14 +1884,16 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                     </label>
                     <input
                       type="text"
+                      data-field="zmw_branch_name"
                       value={payload.zmw_branch_name || ''}
                       onChange={(e) => {
                         updateField('zmw_branch_name', e.target.value);
                         updateField('branch_name', e.target.value);
                       }}
                       placeholder="e.g., Solwezi Branch"
-                      className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs"
+                      className={getInputClass('zmw_branch_name', 'w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs')}
                     />
+                    {renderFieldError('zmw_branch_name')}
                   </div>
                   <div>
                     <label className="block text-[11px] font-semibold text-slate-700 mb-1">
@@ -1602,11 +1916,13 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                     </label>
                     <input
                       type="text"
+                      data-field="zmw_account_name"
                       value={payload.zmw_account_name || ''}
                       onChange={(e) => updateField('zmw_account_name', e.target.value)}
                       placeholder="Name as registered on account"
-                      className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs"
+                      className={getInputClass('zmw_account_name', 'w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs')}
                     />
+                    {renderFieldError('zmw_account_name')}
                   </div>
                   <div className="md:col-span-2">
                     <label className="block text-[11px] font-semibold text-slate-700 mb-1">
@@ -1614,14 +1930,16 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                     </label>
                     <input
                       type="text"
+                      data-field="zmw_account_number"
                       value={payload.zmw_account_number || ''}
                       onChange={(e) => {
                         updateField('zmw_account_number', e.target.value);
                         updateField('account_number', e.target.value);
                       }}
                       placeholder="e.g., 913000..."
-                      className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs font-mono"
+                      className={getInputClass('zmw_account_number', 'w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs font-mono')}
                     />
+                    {renderFieldError('zmw_account_number')}
                   </div>
                 </div>
               ) : (
@@ -1632,10 +1950,12 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                     </label>
                     <input
                       type="text"
+                      data-field="intl_account_name"
                       value={payload.intl_account_name || ''}
                       onChange={(e) => updateField('intl_account_name', e.target.value)}
-                      className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs"
+                      className={getInputClass('intl_account_name', 'w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs')}
                     />
+                    {renderFieldError('intl_account_name')}
                   </div>
                   <div>
                     <label className="block text-[11px] font-semibold text-slate-700 mb-1">
@@ -1654,13 +1974,15 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                     </label>
                     <input
                       type="text"
+                      data-field="intl_account_number"
                       value={payload.intl_account_number || ''}
                       onChange={(e) => {
                         updateField('intl_account_number', e.target.value);
                         updateField('account_number', e.target.value);
                       }}
-                      className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs font-mono"
+                      className={getInputClass('intl_account_number', 'w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs font-mono')}
                     />
+                    {renderFieldError('intl_account_number')}
                   </div>
                   <div>
                     <label className="block text-[11px] font-semibold text-slate-700 mb-1">
@@ -1668,11 +1990,13 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                     </label>
                     <input
                       type="text"
+                      data-field="intl_iban"
                       value={payload.intl_iban || ''}
                       onChange={(e) => updateField('intl_iban', e.target.value)}
                       placeholder="e.g. GB29NWBK60161331926819"
-                      className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs font-mono"
+                      className={getInputClass('intl_iban', 'w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs font-mono')}
                     />
+                    {renderFieldError('intl_iban')}
                   </div>
                   <div>
                     <label className="block text-[11px] font-semibold text-slate-700 mb-1">
@@ -1680,11 +2004,13 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                     </label>
                     <input
                       type="text"
+                      data-field="intl_bic"
                       value={payload.intl_bic || ''}
                       onChange={(e) => updateField('intl_bic', e.target.value)}
                       placeholder="e.g. NWBKGB2L"
-                      className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs font-mono"
+                      className={getInputClass('intl_bic', 'w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs font-mono')}
                     />
+                    {renderFieldError('intl_bic')}
                   </div>
                   <div>
                     <label className="block text-[11px] font-semibold text-slate-700 mb-1">
@@ -1692,11 +2018,13 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                     </label>
                     <input
                       type="text"
+                      data-field="intl_account_currency"
                       value={payload.intl_account_currency || 'USD'}
                       onChange={(e) => updateField('intl_account_currency', e.target.value)}
                       placeholder="USD / GBP / EUR / ZAR"
-                      className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs"
+                      className={getInputClass('intl_account_currency', 'w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs')}
                     />
+                    {renderFieldError('intl_account_currency')}
                   </div>
                   <div className="md:col-span-2">
                     <label className="block text-[11px] font-semibold text-slate-700 mb-1">
@@ -1704,13 +2032,15 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                     </label>
                     <input
                       type="text"
+                      data-field="intl_bank_name"
                       value={payload.intl_bank_name || ''}
                       onChange={(e) => {
                         updateField('intl_bank_name', e.target.value);
                         updateField('bank_name', e.target.value);
                       }}
-                      className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs"
+                      className={getInputClass('intl_bank_name', 'w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs')}
                     />
+                    {renderFieldError('intl_bank_name')}
                   </div>
                   <div>
                     <label className="block text-[11px] font-semibold text-slate-700 mb-1">
@@ -1762,10 +2092,12 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                     </label>
                     <input
                       type="text"
+                      data-field="intl_country"
                       value={payload.intl_country || ''}
                       onChange={(e) => updateField('intl_country', e.target.value)}
-                      className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs"
+                      className={getInputClass('intl_country', 'w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs')}
                     />
+                    {renderFieldError('intl_country')}
                   </div>
                 </div>
               )}
@@ -1788,6 +2120,7 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
             total_costs_zmw: tot,
             cost_zmw: tot,
           }));
+          clearFieldError('training_costs_zmw');
         };
 
         return (
@@ -1805,11 +2138,13 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                 </label>
                 <input
                   type="text"
+                  data-field="position"
                   value={payload.position || ''}
                   onChange={(e) => updateField('position', e.target.value)}
-                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  className={getInputClass('position', 'w-full border rounded-lg px-3 py-2 text-sm')}
                   placeholder="e.g., Mathematics Teacher"
                 />
+                {renderFieldError('position')}
               </div>
 
               <div>
@@ -1818,14 +2153,16 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                 </label>
                 <input
                   type="text"
+                  data-field="training_provider_location"
                   value={payload.training_provider_location || ''}
                   onChange={(e) => {
                     updateField('training_provider_location', e.target.value);
                     updateField('provider', e.target.value);
                   }}
-                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  className={getInputClass('training_provider_location', 'w-full border rounded-lg px-3 py-2 text-sm')}
                   placeholder="e.g., Cambridge Assessment / Lusaka"
                 />
+                {renderFieldError('training_provider_location')}
               </div>
 
               <div className="md:col-span-2">
@@ -1834,14 +2171,16 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                 </label>
                 <textarea
                   rows={3}
+                  data-field="description"
                   value={payload.description || ''}
                   onChange={(e) => {
                     updateField('description', e.target.value);
                     updateField('course_title', e.target.value);
                   }}
-                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  className={getInputClass('description', 'w-full border rounded-lg px-3 py-2 text-sm')}
                   placeholder="Details of the professional development course, workshop, or qualification..."
                 />
+                {renderFieldError('description')}
               </div>
 
               <div>
@@ -1850,14 +2189,16 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                 </label>
                 <input
                   type="text"
+                  data-field="course_days_and_dates"
                   value={payload.course_days_and_dates || ''}
                   onChange={(e) => {
                     updateField('course_days_and_dates', e.target.value);
                     updateField('start_date', e.target.value);
                   }}
                   placeholder="e.g., 5 Days (12th - 16th May 2026)"
-                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  className={getInputClass('course_days_and_dates', 'w-full border rounded-lg px-3 py-2 text-sm')}
                 />
+                {renderFieldError('course_days_and_dates')}
               </div>
 
               <div className="md:col-span-2">
@@ -1866,14 +2207,16 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                 </label>
                 <textarea
                   rows={3}
+                  data-field="expected_outcomes"
                   value={payload.expected_outcomes || ''}
                   onChange={(e) => {
                     updateField('expected_outcomes', e.target.value);
                     updateField('justification', e.target.value);
                   }}
-                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  className={getInputClass('expected_outcomes', 'w-full border rounded-lg px-3 py-2 text-sm')}
                   placeholder="Expected impact on teaching delivery, curriculum enhancement, and student outcomes..."
                 />
+                {renderFieldError('expected_outcomes')}
               </div>
 
               {/* Cost Breakdown */}
@@ -1883,12 +2226,14 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                 </label>
                 <input
                   type="number"
+                  data-field="training_costs_zmw"
                   min={0}
                   value={payload.training_costs_zmw || ''}
                   onChange={(e) => updateProfDevCosts(Number(e.target.value), travelExp)}
-                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  className={getInputClass('training_costs_zmw', 'w-full border rounded-lg px-3 py-2 text-sm')}
                   placeholder="Tuition / Registration fee"
                 />
+                {renderFieldError('training_costs_zmw')}
               </div>
 
               <div>
@@ -1939,6 +2284,7 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
           const next = [...reasons];
           next[idx] = val;
           updateField('renewal_reasons', next);
+          clearFieldError('renewal_reasons');
         };
 
         return (
@@ -1954,10 +2300,12 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                 </label>
                 <input
                   type="text"
+                  data-field="staff_name"
                   value={payload.staff_name || ''}
                   onChange={(e) => updateField('staff_name', e.target.value)}
-                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  className={getInputClass('staff_name', 'w-full border rounded-lg px-3 py-2 text-sm')}
                 />
+                {renderFieldError('staff_name')}
               </div>
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
@@ -1965,10 +2313,12 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                 </label>
                 <input
                   type="text"
+                  data-field="position"
                   value={payload.position || ''}
                   onChange={(e) => updateField('position', e.target.value)}
-                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  className={getInputClass('position', 'w-full border rounded-lg px-3 py-2 text-sm')}
                 />
+                {renderFieldError('position')}
               </div>
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
@@ -1976,10 +2326,12 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                 </label>
                 <input
                   type="text"
+                  data-field="supervisor_name"
                   value={payload.supervisor_name || ''}
                   onChange={(e) => updateField('supervisor_name', e.target.value)}
-                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  className={getInputClass('supervisor_name', 'w-full border rounded-lg px-3 py-2 text-sm')}
                 />
+                {renderFieldError('supervisor_name')}
               </div>
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
@@ -1987,13 +2339,15 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                 </label>
                 <input
                   type="text"
+                  data-field="school_or_department"
                   value={payload.school_or_department ?? payload.site_or_department ?? ''}
                   onChange={(e) => {
                     updateField('school_or_department', e.target.value);
                     updateField('site_or_department', e.target.value);
                   }}
-                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  className={getInputClass('school_or_department', 'w-full border rounded-lg px-3 py-2 text-sm')}
                 />
+                {renderFieldError('school_or_department')}
               </div>
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
@@ -2001,10 +2355,12 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                 </label>
                 <input
                   type="date"
+                  data-field="contract_start_date"
                   value={payload.contract_start_date || ''}
                   onChange={(e) => updateField('contract_start_date', e.target.value)}
-                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  className={getInputClass('contract_start_date', 'w-full border rounded-lg px-3 py-2 text-sm')}
                 />
+                {renderFieldError('contract_start_date')}
               </div>
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
@@ -2012,13 +2368,15 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                 </label>
                 <input
                   type="date"
+                  data-field="contract_end_date"
                   value={payload.contract_end_date ?? payload.current_contract_end_date ?? ''}
                   onChange={(e) => {
                     updateField('contract_end_date', e.target.value);
                     updateField('current_contract_end_date', e.target.value);
                   }}
-                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  className={getInputClass('contract_end_date', 'w-full border rounded-lg px-3 py-2 text-sm')}
                 />
+                {renderFieldError('contract_end_date')}
               </div>
             </div>
 
@@ -2026,12 +2384,15 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
               <label className="block text-xs font-bold text-slate-800">
                 Contract to be Renewed? *
               </label>
-              <div className="flex gap-4">
+              <div className="flex gap-4" data-field="contract_to_be_renewed">
                 {(['YES', 'NO'] as const).map((opt) => (
                   <button
                     type="button"
                     key={opt}
-                    onClick={() => updateField('contract_to_be_renewed', opt)}
+                    onClick={() => {
+                      updateField('contract_to_be_renewed', opt);
+                      clearFieldError('contract_to_be_renewed');
+                    }}
                     className={`px-5 py-2 rounded-lg text-xs font-bold border transition ${
                       (payload.contract_to_be_renewed || 'YES') === opt
                         ? opt === 'YES' ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-red-600 text-white border-red-600'
@@ -2042,9 +2403,10 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                   </button>
                 ))}
               </div>
+              {renderFieldError('contract_to_be_renewed')}
             </div>
 
-            <div className="space-y-3">
+            <div className="space-y-3" data-field="renewal_reasons">
               <div>
                 <label className="block text-xs font-bold text-slate-800">
                   Reasons for Contract Renewal / Non-Renewal *
@@ -2053,6 +2415,7 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                   As a general rule, the Head bases this decision on the staff member's targets for development (as specified in the Personal Target Setting Form) and progress made against these:
                 </span>
               </div>
+              {renderFieldError('renewal_reasons')}
               {[0, 1, 2].map((idx) => (
                 <div key={idx} className="flex items-start gap-2">
                   <span className="text-xs font-bold text-slate-500 pt-2 w-5">{idx + 1}.</span>
@@ -2061,7 +2424,7 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                     value={reasons[idx] || ''}
                     onChange={(e) => updateReason(idx, e.target.value)}
                     placeholder={`Progress against development target #${idx + 1}...`}
-                    className="flex-1 border rounded-lg px-3 py-2 text-xs"
+                    className="flex-1 border border-slate-300 rounded-lg px-3 py-2 text-xs"
                   />
                 </div>
               ))}
@@ -2107,40 +2470,52 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                 Accused Employee Details
               </span>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div>
+                <div data-field="accused_name">
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
                     Name of the Accused *
                   </label>
                   <input
                     type="text"
                     value={payload.accused_name || ''}
-                    onChange={(e) => updateField('accused_name', e.target.value)}
-                    className="w-full bg-white border rounded-lg px-3 py-2 text-sm"
+                    onChange={(e) => {
+                      updateField('accused_name', e.target.value);
+                      clearFieldError('accused_name');
+                    }}
+                    className={getInputClass('accused_name', 'w-full bg-white border rounded-lg px-3 py-2 text-sm')}
                   />
+                  {renderFieldError('accused_name')}
                 </div>
-                <div>
+                <div data-field="accused_position">
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
                     Position *
                   </label>
                   <input
                     type="text"
                     value={payload.accused_position || ''}
-                    onChange={(e) => updateField('accused_position', e.target.value)}
-                    className="w-full bg-white border rounded-lg px-3 py-2 text-sm"
+                    onChange={(e) => {
+                      updateField('accused_position', e.target.value);
+                      clearFieldError('accused_position');
+                    }}
+                    className={getInputClass('accused_position', 'w-full bg-white border rounded-lg px-3 py-2 text-sm')}
                   />
+                  {renderFieldError('accused_position')}
                 </div>
-                <div>
+                <div data-field="accused_employee_number">
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
                     Employee Number / Man No. *
                   </label>
                   <input
                     type="text"
                     value={payload.accused_employee_number || ''}
-                    onChange={(e) => updateField('accused_employee_number', e.target.value)}
-                    className="w-full bg-white border rounded-lg px-3 py-2 text-sm"
+                    onChange={(e) => {
+                      updateField('accused_employee_number', e.target.value);
+                      clearFieldError('accused_employee_number');
+                    }}
+                    className={getInputClass('accused_employee_number', 'w-full bg-white border rounded-lg px-3 py-2 text-sm')}
                   />
+                  {renderFieldError('accused_employee_number')}
                 </div>
-                <div>
+                <div data-field="dept_or_school">
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
                     Dept / School (Site) *
                   </label>
@@ -2150,9 +2525,11 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                     onChange={(e) => {
                       updateField('dept_or_school', e.target.value);
                       updateField('dept_or_site', e.target.value);
+                      clearFieldError('dept_or_school');
                     }}
-                    className="w-full bg-white border rounded-lg px-3 py-2 text-sm"
+                    className={getInputClass('dept_or_school', 'w-full bg-white border rounded-lg px-3 py-2 text-sm')}
                   />
+                  {renderFieldError('dept_or_school')}
                 </div>
               </div>
             </div>
@@ -2163,16 +2540,20 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                 Charging Officer Particulars
               </span>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <div>
+                <div data-field="charging_officer_name">
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
                     Name of Charging Officer *
                   </label>
                   <input
                     type="text"
                     value={payload.charging_officer_name || ''}
-                    onChange={(e) => updateField('charging_officer_name', e.target.value)}
-                    className="w-full bg-white border rounded-lg px-3 py-2 text-sm"
+                    onChange={(e) => {
+                      updateField('charging_officer_name', e.target.value);
+                      clearFieldError('charging_officer_name');
+                    }}
+                    className={getInputClass('charging_officer_name', 'w-full bg-white border rounded-lg px-3 py-2 text-sm')}
                   />
+                  {renderFieldError('charging_officer_name')}
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
@@ -2185,7 +2566,7 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                     className="w-full bg-white border rounded-lg px-3 py-2 text-sm"
                   />
                 </div>
-                <div>
+                <div data-field="date_of_charge">
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
                     Date of Charge *
                   </label>
@@ -2195,15 +2576,17 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                     onChange={(e) => {
                       updateField('date_of_charge', e.target.value);
                       updateField('incident_date', e.target.value);
+                      clearFieldError('date_of_charge');
                     }}
-                    className="w-full bg-white border rounded-lg px-3 py-2 text-sm"
+                    className={getInputClass('date_of_charge', 'w-full bg-white border rounded-lg px-3 py-2 text-sm')}
                   />
+                  {renderFieldError('date_of_charge')}
                 </div>
               </div>
             </div>
 
             <div className="space-y-4">
-              <div>
+              <div data-field="offence_description">
                 <label className="block text-xs font-bold text-slate-800 mb-1">
                   1. Exculpatory Statement Against the Offence Of: *
                 </label>
@@ -2213,23 +2596,29 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                   onChange={(e) => {
                     updateField('offence_description', e.target.value);
                     updateField('charge_reference', e.target.value);
+                    clearFieldError('offence_description');
                   }}
-                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  className={getInputClass('offence_description', 'w-full border rounded-lg px-3 py-2 text-sm')}
                   placeholder="Specify the exact disciplinary charge or alleged offence..."
                 />
+                {renderFieldError('offence_description')}
               </div>
 
-              <div>
+              <div data-field="employee_statement">
                 <label className="block text-xs font-bold text-slate-800 mb-1">
                   2. Statement *
                 </label>
                 <textarea
                   rows={6}
                   value={payload.employee_statement || ''}
-                  onChange={(e) => updateField('employee_statement', e.target.value)}
-                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  onChange={(e) => {
+                    updateField('employee_statement', e.target.value);
+                    clearFieldError('employee_statement');
+                  }}
+                  className={getInputClass('employee_statement', 'w-full border rounded-lg px-3 py-2 text-sm')}
                   placeholder="Detail your complete statement, mitigating factors, and exculpatory facts in response to the charge..."
                 />
+                {renderFieldError('employee_statement')}
               </div>
             </div>
           </div>
@@ -2244,7 +2633,7 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                 1. Requisition Header & Vacancy Details
               </span>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <div>
+                <div data-field="position_requested">
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
                     Position Requested For *
                   </label>
@@ -2254,12 +2643,14 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                     onChange={(e) => {
                       updateField('position_requested', e.target.value);
                       updateField('position_title', e.target.value);
+                      clearFieldError('position_requested');
                     }}
                     placeholder="e.g. Science Teacher (IGCSE Physics)"
-                    className="w-full bg-white border rounded-lg px-3 py-2 text-sm"
+                    className={getInputClass('position_requested', 'w-full bg-white border rounded-lg px-3 py-2 text-sm')}
                   />
+                  {renderFieldError('position_requested')}
                 </div>
-                <div>
+                <div data-field="number_of_staff_required">
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
                     Number of Staff Required *
                   </label>
@@ -2271,11 +2662,13 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                       const val = Number(e.target.value);
                       updateField('number_of_staff_required', val);
                       updateField('headcount', val);
+                      clearFieldError('number_of_staff_required');
                     }}
-                    className="w-full bg-white border rounded-lg px-3 py-2 text-sm"
+                    className={getInputClass('number_of_staff_required', 'w-full bg-white border rounded-lg px-3 py-2 text-sm')}
                   />
+                  {renderFieldError('number_of_staff_required')}
                 </div>
-                <div>
+                <div data-field="required_start_date">
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
                     Required Start of Employment *
                   </label>
@@ -2285,22 +2678,27 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                     onChange={(e) => {
                       updateField('required_start_date', e.target.value);
                       updateField('target_start_date', e.target.value);
+                      clearFieldError('required_start_date');
                     }}
-                    className="w-full bg-white border rounded-lg px-3 py-2 text-sm"
+                    className={getInputClass('required_start_date', 'w-full bg-white border rounded-lg px-3 py-2 text-sm')}
                   />
+                  {renderFieldError('required_start_date')}
                 </div>
               </div>
             </div>
 
             {/* Vacancy Origin */}
-            <div className="p-4 rounded-xl bg-blue-50/50 border border-blue-200 space-y-3">
+            <div data-field="vacancy_type" className="p-4 rounded-xl bg-blue-50/50 border border-blue-200 space-y-3">
               <label className="block text-xs font-bold text-slate-800">
                 The Vacancy Has Arisen Due To: *
               </label>
               <div className="flex gap-4">
                 <button
                   type="button"
-                  onClick={() => updateField('vacancy_type', 'REPLACEMENT')}
+                  onClick={() => {
+                    updateField('vacancy_type', 'REPLACEMENT');
+                    clearFieldError('vacancy_type');
+                  }}
                   className={`px-4 py-1.5 rounded-lg text-xs font-bold border transition ${
                     vacancyType === 'REPLACEMENT'
                       ? 'bg-blue-600 text-white border-blue-600'
@@ -2311,7 +2709,10 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                 </button>
                 <button
                   type="button"
-                  onClick={() => updateField('vacancy_type', 'NEW_POSITION')}
+                  onClick={() => {
+                    updateField('vacancy_type', 'NEW_POSITION');
+                    clearFieldError('vacancy_type');
+                  }}
                   className={`px-4 py-1.5 rounded-lg text-xs font-bold border transition ${
                     vacancyType === 'NEW_POSITION'
                       ? 'bg-blue-600 text-white border-blue-600'
@@ -2321,22 +2722,27 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                   b) New Position
                 </button>
               </div>
+              {renderFieldError('vacancy_type')}
 
               {vacancyType === 'REPLACEMENT' ? (
-                <div>
+                <div data-field="replacement_of_person">
                   <label className="block text-[11px] font-semibold text-slate-700 mb-1">
                     Replacement of (Staff Name / Former Incumbent) *
                   </label>
                   <input
                     type="text"
                     value={payload.replacement_of_person || ''}
-                    onChange={(e) => updateField('replacement_of_person', e.target.value)}
+                    onChange={(e) => {
+                      updateField('replacement_of_person', e.target.value);
+                      clearFieldError('replacement_of_person');
+                    }}
                     placeholder="Enter full name of departing staff member"
-                    className="w-full bg-white border rounded-lg px-3 py-2 text-sm"
+                    className={getInputClass('replacement_of_person', 'w-full bg-white border rounded-lg px-3 py-2 text-sm')}
                   />
+                  {renderFieldError('replacement_of_person')}
                 </div>
               ) : (
-                <div>
+                <div data-field="new_position_reason">
                   <label className="block text-[11px] font-semibold text-slate-700 mb-1">
                     New Position Due To (Justification / Enrolment Growth) *
                   </label>
@@ -2346,10 +2752,12 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                     onChange={(e) => {
                       updateField('new_position_reason', e.target.value);
                       updateField('justification', e.target.value);
+                      clearFieldError('new_position_reason');
                     }}
                     placeholder="State reason for new headcount..."
-                    className="w-full bg-white border rounded-lg px-3 py-2 text-sm"
+                    className={getInputClass('new_position_reason', 'w-full bg-white border rounded-lg px-3 py-2 text-sm')}
                   />
+                  {renderFieldError('new_position_reason')}
                 </div>
               )}
             </div>
@@ -2369,68 +2777,88 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                   <option value="NO">No, Unbudgeted</option>
                 </select>
               </div>
-              <div>
+              <div data-field="reports_to">
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
                   The Job Holder Reports To *
                 </label>
                 <input
                   type="text"
                   value={payload.reports_to || ''}
-                  onChange={(e) => updateField('reports_to', e.target.value)}
+                  onChange={(e) => {
+                    updateField('reports_to', e.target.value);
+                    clearFieldError('reports_to');
+                  }}
                   placeholder="e.g. Head Teacher / Head of Department"
-                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  className={getInputClass('reports_to', 'w-full border rounded-lg px-3 py-2 text-sm')}
                 />
+                {renderFieldError('reports_to')}
               </div>
 
-              <div className="md:col-span-2">
+              <div data-field="consequences_of_failure_to_fill" className="md:col-span-2">
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
                   Consequences of Failure to Fill the Vacancy *
                 </label>
                 <textarea
                   rows={2}
                   value={payload.consequences_of_failure_to_fill || ''}
-                  onChange={(e) => updateField('consequences_of_failure_to_fill', e.target.value)}
-                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  onChange={(e) => {
+                    updateField('consequences_of_failure_to_fill', e.target.value);
+                    clearFieldError('consequences_of_failure_to_fill');
+                  }}
+                  className={getInputClass('consequences_of_failure_to_fill', 'w-full border rounded-lg px-3 py-2 text-sm')}
                   placeholder="Operational disruption, compliance breach, timetable uncoverage..."
                 />
+                {renderFieldError('consequences_of_failure_to_fill')}
               </div>
 
-              <div>
+              <div data-field="professional_qualifications_required">
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
                   Professional Qualifications Required *
                 </label>
                 <textarea
                   rows={2}
                   value={payload.professional_qualifications_required || ''}
-                  onChange={(e) => updateField('professional_qualifications_required', e.target.value)}
-                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  onChange={(e) => {
+                    updateField('professional_qualifications_required', e.target.value);
+                    clearFieldError('professional_qualifications_required');
+                  }}
+                  className={getInputClass('professional_qualifications_required', 'w-full border rounded-lg px-3 py-2 text-sm')}
                   placeholder="e.g. Bachelor of Science in Physics with Education, TCZ Registered"
                 />
+                {renderFieldError('professional_qualifications_required')}
               </div>
 
-              <div>
+              <div data-field="relevant_field_experience_required">
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
                   Relevant Field Experience Required *
                 </label>
                 <textarea
                   rows={2}
                   value={payload.relevant_field_experience_required || ''}
-                  onChange={(e) => updateField('relevant_field_experience_required', e.target.value)}
-                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  onChange={(e) => {
+                    updateField('relevant_field_experience_required', e.target.value);
+                    clearFieldError('relevant_field_experience_required');
+                  }}
+                  className={getInputClass('relevant_field_experience_required', 'w-full border rounded-lg px-3 py-2 text-sm')}
                   placeholder="e.g. Minimum 3 years teaching Cambridge IGCSE syllabus"
                 />
+                {renderFieldError('relevant_field_experience_required')}
               </div>
 
-              <div className="md:col-span-2">
+              <div data-field="job_description_summary" className="md:col-span-2">
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
                   Summary of the Job Description / Job *
                 </label>
                 <textarea
                   rows={2}
                   value={payload.job_description_summary || ''}
-                  onChange={(e) => updateField('job_description_summary', e.target.value)}
-                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  onChange={(e) => {
+                    updateField('job_description_summary', e.target.value);
+                    clearFieldError('job_description_summary');
+                  }}
+                  className={getInputClass('job_description_summary', 'w-full border rounded-lg px-3 py-2 text-sm')}
                 />
+                {renderFieldError('job_description_summary')}
               </div>
 
               <div>
@@ -2460,30 +2888,38 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                 />
               </div>
 
-              <div>
+              <div data-field="required_contract_period">
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
                   Required Contract Period *
                 </label>
                 <input
                   type="text"
                   value={payload.required_contract_period || ''}
-                  onChange={(e) => updateField('required_contract_period', e.target.value)}
+                  onChange={(e) => {
+                    updateField('required_contract_period', e.target.value);
+                    clearFieldError('required_contract_period');
+                  }}
                   placeholder="e.g. 2 Years Fixed-Term / Permanent"
-                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  className={getInputClass('required_contract_period', 'w-full border rounded-lg px-3 py-2 text-sm')}
                 />
+                {renderFieldError('required_contract_period')}
               </div>
 
-              <div>
+              <div data-field="salary_recommendation_zmw">
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
                   Salary Recommendation (Based on defined salary scale) *
                 </label>
                 <input
                   type="text"
                   value={payload.salary_recommendation_zmw || ''}
-                  onChange={(e) => updateField('salary_recommendation_zmw', e.target.value)}
+                  onChange={(e) => {
+                    updateField('salary_recommendation_zmw', e.target.value);
+                    clearFieldError('salary_recommendation_zmw');
+                  }}
                   placeholder="e.g. Band 4 / ZMW 25,000"
-                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  className={getInputClass('salary_recommendation_zmw', 'w-full border rounded-lg px-3 py-2 text-sm')}
                 />
+                {renderFieldError('salary_recommendation_zmw')}
               </div>
 
               <div className="md:col-span-2">
@@ -2520,7 +2956,7 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
         return (
           <div className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
+              <div data-field="sites">
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
                   Site(s) *
                 </label>
@@ -2530,22 +2966,28 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                   onChange={(e) => {
                     updateField('sites', e.target.value);
                     updateField('schools', e.target.value);
+                    clearFieldError('sites');
                   }}
-                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  className={getInputClass('sites', 'w-full border rounded-lg px-3 py-2 text-sm')}
                 />
+                {renderFieldError('sites')}
               </div>
-              <div>
+              <div data-field="event_name">
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
                   Event Name *
                 </label>
                 <input
                   type="text"
                   value={payload.event_name || ''}
-                  onChange={(e) => updateField('event_name', e.target.value)}
-                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  onChange={(e) => {
+                    updateField('event_name', e.target.value);
+                    clearFieldError('event_name');
+                  }}
+                  className={getInputClass('event_name', 'w-full border rounded-lg px-3 py-2 text-sm')}
                 />
+                {renderFieldError('event_name')}
               </div>
-              <div>
+              <div data-field="event_type">
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
                   Type of Event *
                 </label>
@@ -2553,59 +2995,79 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                   type="text"
                   placeholder="e.g., Sports Tournament, Academic Fair, Camp"
                   value={payload.event_type || ''}
-                  onChange={(e) => updateField('event_type', e.target.value)}
-                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  onChange={(e) => {
+                    updateField('event_type', e.target.value);
+                    clearFieldError('event_type');
+                  }}
+                  className={getInputClass('event_type', 'w-full border rounded-lg px-3 py-2 text-sm')}
                 />
+                {renderFieldError('event_type')}
               </div>
-              <div>
+              <div data-field="event_coordinator">
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
                   Event Coordinator *
                 </label>
                 <input
                   type="text"
                   value={payload.event_coordinator || ''}
-                  onChange={(e) => updateField('event_coordinator', e.target.value)}
-                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  onChange={(e) => {
+                    updateField('event_coordinator', e.target.value);
+                    clearFieldError('event_coordinator');
+                  }}
+                  className={getInputClass('event_coordinator', 'w-full border rounded-lg px-3 py-2 text-sm')}
                 />
+                {renderFieldError('event_coordinator')}
               </div>
-              <div>
+              <div data-field="file_number">
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
                   File Number *
                 </label>
                 <input
                   type="text"
                   value={payload.file_number || ''}
-                  onChange={(e) => updateField('file_number', e.target.value)}
-                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  onChange={(e) => {
+                    updateField('file_number', e.target.value);
+                    clearFieldError('file_number');
+                  }}
+                  className={getInputClass('file_number', 'w-full border rounded-lg px-3 py-2 text-sm')}
                 />
+                {renderFieldError('file_number')}
               </div>
               <div className="grid grid-cols-2 gap-2">
-                <div>
+                <div data-field="file_open_date">
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
                     File Open Date *
                   </label>
                   <input
                     type="date"
                     value={payload.file_open_date || ''}
-                    onChange={(e) => updateField('file_open_date', e.target.value)}
-                    className="w-full border rounded-lg px-2.5 py-2 text-xs"
+                    onChange={(e) => {
+                      updateField('file_open_date', e.target.value);
+                      clearFieldError('file_open_date');
+                    }}
+                    className={getInputClass('file_open_date', 'w-full border rounded-lg px-2.5 py-2 text-xs')}
                   />
+                  {renderFieldError('file_open_date')}
                 </div>
-                <div>
+                <div data-field="event_date">
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
                     Date of Event *
                   </label>
                   <input
                     type="date"
                     value={payload.event_date || ''}
-                    onChange={(e) => updateField('event_date', e.target.value)}
-                    className="w-full border rounded-lg px-2.5 py-2 text-xs"
+                    onChange={(e) => {
+                      updateField('event_date', e.target.value);
+                      clearFieldError('event_date');
+                    }}
+                    className={getInputClass('event_date', 'w-full border rounded-lg px-2.5 py-2 text-xs')}
                   />
+                  {renderFieldError('event_date')}
                 </div>
               </div>
             </div>
 
-            <div className="p-4 rounded-xl bg-blue-50/60 border border-blue-200 text-xs text-slate-700 space-y-2">
+            <div data-field="coordinator_confirmed" className="p-4 rounded-xl bg-blue-50/60 border border-blue-200 text-xs text-slate-700 space-y-2">
               <p className="leading-relaxed">
                 "I confirm that the event costings were prepared, agreed on with finance and communicated by the site with all billing parties (if rechargeable) involved. All necessary documents have been handed in to finance and the event was completed successfully. I further confirm that all Purchase Requisitions (PR) for this event were submitted to the Procurement department."
               </p>
@@ -2613,10 +3075,14 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                 <input
                   type="checkbox"
                   checked={Boolean(payload.coordinator_confirmed)}
-                  onChange={(e) => updateField('coordinator_confirmed', e.target.checked)}
+                  onChange={(e) => {
+                    updateField('coordinator_confirmed', e.target.checked);
+                    clearFieldError('coordinator_confirmed');
+                  }}
                 />
                 I confirm the above Event Coordinator declaration
               </label>
+              {renderFieldError('coordinator_confirmed')}
             </div>
           </div>
         );
@@ -2626,16 +3092,20 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
         return (
           <div className="space-y-5">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
+              <div data-field="location">
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
                   Site / Location *
                 </label>
                 <input
                   type="text"
                   value={payload.location || ''}
-                  onChange={(e) => updateField('location', e.target.value)}
-                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  onChange={(e) => {
+                    updateField('location', e.target.value);
+                    clearFieldError('location');
+                  }}
+                  className={getInputClass('location', 'w-full border rounded-lg px-3 py-2 text-sm')}
                 />
+                {renderFieldError('location')}
               </div>
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
@@ -2655,64 +3125,79 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                 </select>
               </div>
               {payload.inventory_action === 'OTHER' && (
-                <div className="md:col-span-2">
+                <div data-field="inventory_action_other" className="md:col-span-2">
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
                     Specify Other Inventory Action *
                   </label>
                   <input
                     type="text"
                     value={payload.inventory_action_other || ''}
-                    onChange={(e) => updateField('inventory_action_other', e.target.value)}
+                    onChange={(e) => {
+                      updateField('inventory_action_other', e.target.value);
+                      clearFieldError('inventory_action_other');
+                    }}
                     placeholder="Specify custom inventory disposition..."
-                    className="w-full border rounded-lg px-3 py-2 text-sm"
+                    className={getInputClass('inventory_action_other', 'w-full border rounded-lg px-3 py-2 text-sm')}
                   />
+                  {renderFieldError('inventory_action_other')}
                 </div>
               )}
-              <div className="md:col-span-2">
+              <div data-field="return_reason" className="md:col-span-2">
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
                   Reason for Return *
                 </label>
                 <textarea
                   rows={2}
                   value={payload.return_reason || ''}
-                  onChange={(e) => updateField('return_reason', e.target.value)}
-                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  onChange={(e) => {
+                    updateField('return_reason', e.target.value);
+                    clearFieldError('return_reason');
+                  }}
+                  className={getInputClass('return_reason', 'w-full border rounded-lg px-3 py-2 text-sm')}
                 />
+                {renderFieldError('return_reason')}
               </div>
             </div>
 
-            <div className="space-y-2">
+            <div data-field="items" className="space-y-2">
               <div className="flex justify-between items-center">
                 <label className="text-xs font-bold text-slate-700">
                   Returned Stock Items (No., Item, Unit, Qty, Condition, Remarks) *
                 </label>
                 <button
                   type="button"
-                  onClick={() =>
+                  onClick={() => {
                     updateField('items', [
                       ...items,
                       { item: '', unit: 'EA', qty: 1, condition: 'GOOD', remarks: '' },
-                    ])
-                  }
+                    ]);
+                    clearFieldError('items');
+                  }}
                   className="inline-flex items-center gap-1 text-xs font-semibold text-blue-600 hover:text-blue-800"
                 >
                   <Plus className="w-3.5 h-3.5" /> Add Row
                 </button>
               </div>
+              {renderFieldError('items')}
 
               {items.map((row, idx) => (
-                <div key={idx} className="grid grid-cols-12 gap-2 items-center">
-                  <input
-                    type="text"
-                    placeholder="Item description *"
-                    value={row.item}
-                    onChange={(e) => {
-                      const next = [...items];
-                      next[idx] = { ...row, item: e.target.value };
-                      updateField('items', next);
-                    }}
-                    className="col-span-4 border rounded-lg px-2.5 py-1.5 text-xs"
-                  />
+                <div key={idx} className="grid grid-cols-12 gap-2 items-start">
+                  <div className="col-span-4" data-field={`item_${idx}_item`}>
+                    <input
+                      type="text"
+                      placeholder="Item description *"
+                      value={row.item}
+                      onChange={(e) => {
+                        const next = [...items];
+                        next[idx] = { ...row, item: e.target.value };
+                        updateField('items', next);
+                        clearFieldError(`item_${idx}_item`);
+                        clearFieldError('items');
+                      }}
+                      className={getInputClass(`item_${idx}_item`, 'w-full border rounded-lg px-2.5 py-1.5 text-xs')}
+                    />
+                    {renderFieldError(`item_${idx}_item`)}
+                  </div>
                   <input
                     type="text"
                     placeholder="Unit"
@@ -2724,18 +3209,23 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                     }}
                     className="col-span-1 border rounded-lg px-2 py-1.5 text-xs"
                   />
-                  <input
-                    type="number"
-                    min={1}
-                    placeholder="Qty"
-                    value={row.qty}
-                    onChange={(e) => {
-                      const next = [...items];
-                      next[idx] = { ...row, qty: Number(e.target.value) };
-                      updateField('items', next);
-                    }}
-                    className="col-span-2 border rounded-lg px-2 py-1.5 text-xs"
-                  />
+                  <div className="col-span-2" data-field={`item_${idx}_qty`}>
+                    <input
+                      type="number"
+                      min={1}
+                      placeholder="Qty"
+                      value={row.qty}
+                      onChange={(e) => {
+                        const next = [...items];
+                        next[idx] = { ...row, qty: Number(e.target.value) };
+                        updateField('items', next);
+                        clearFieldError(`item_${idx}_qty`);
+                        clearFieldError('items');
+                      }}
+                      className={getInputClass(`item_${idx}_qty`, 'w-full border rounded-lg px-2 py-1.5 text-xs')}
+                    />
+                    {renderFieldError(`item_${idx}_qty`)}
+                  </div>
                   <select
                     value={row.condition}
                     onChange={(e) => {
@@ -2766,7 +3256,7 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                     type="button"
                     disabled={items.length <= 1}
                     onClick={() => updateField('items', items.filter((_, i) => i !== idx))}
-                    className="col-span-1 text-red-500 hover:text-red-700 disabled:opacity-30 flex justify-center"
+                    className="col-span-1 text-red-500 hover:text-red-700 disabled:opacity-30 flex justify-center pt-2"
                   >
                     <Trash2 className="w-4 h-4" />
                   </button>
@@ -2782,7 +3272,7 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
         return (
           <div className="space-y-5">
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-              <div>
+              <div data-field="school">
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
                   School / Site *
                 </label>
@@ -2792,21 +3282,27 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                   onChange={(e) => {
                     updateField('school', e.target.value);
                     updateField('site', e.target.value);
+                    clearFieldError('school');
                   }}
-                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  className={getInputClass('school', 'w-full border rounded-lg px-3 py-2 text-sm')}
                   placeholder="e.g. Sentinel Kalumbila"
                 />
+                {renderFieldError('school')}
               </div>
-              <div>
+              <div data-field="department">
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
                   Department *
                 </label>
                 <input
                   type="text"
                   value={payload.department || ''}
-                  onChange={(e) => updateField('department', e.target.value)}
-                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  onChange={(e) => {
+                    updateField('department', e.target.value);
+                    clearFieldError('department');
+                  }}
+                  className={getInputClass('department', 'w-full border rounded-lg px-3 py-2 text-sm')}
                 />
+                {renderFieldError('department')}
               </div>
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
@@ -2819,66 +3315,82 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                   className="w-full border rounded-lg px-3 py-2 text-sm"
                 />
               </div>
-              <div>
+              <div data-field="purpose">
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
                   Purpose *
                 </label>
                 <input
                   type="text"
                   value={payload.purpose || ''}
-                  onChange={(e) => updateField('purpose', e.target.value)}
-                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  onChange={(e) => {
+                    updateField('purpose', e.target.value);
+                    clearFieldError('purpose');
+                  }}
+                  className={getInputClass('purpose', 'w-full border rounded-lg px-3 py-2 text-sm')}
                 />
+                {renderFieldError('purpose')}
               </div>
             </div>
 
-            <div className="space-y-2">
+            <div data-field="items" className="space-y-2">
               <div className="flex justify-between items-center">
                 <label className="text-xs font-bold text-slate-700">
                   Ordered Items to Issue (Description, Qty Req., Additional Information) *
                 </label>
                 <button
                   type="button"
-                  onClick={() =>
+                  onClick={() => {
                     updateField('items', [
                       ...items,
                       { description: '', qty_requested: 1, additional_info: '' },
-                    ])
-                  }
+                    ]);
+                    clearFieldError('items');
+                  }}
                   className="inline-flex items-center gap-1 text-xs font-semibold text-blue-600 hover:text-blue-800"
                 >
                   <Plus className="w-3.5 h-3.5" /> Add Item
                 </button>
               </div>
+              {renderFieldError('items')}
 
               {items.map((row, idx) => (
-                <div key={idx} className="grid grid-cols-12 gap-2 items-center">
-                  <span className="col-span-1 text-xs font-mono text-slate-400 text-center">
+                <div key={idx} className="grid grid-cols-12 gap-2 items-start">
+                  <span className="col-span-1 text-xs font-mono text-slate-400 text-center pt-2">
                     #{idx + 1}
                   </span>
-                  <input
-                    type="text"
-                    placeholder="Item Description *"
-                    value={row.description}
-                    onChange={(e) => {
-                      const next = [...items];
-                      next[idx] = { ...row, description: e.target.value };
-                      updateField('items', next);
-                    }}
-                    className="col-span-5 border rounded-lg px-2.5 py-1.5 text-xs"
-                  />
-                  <input
-                    type="number"
-                    min={1}
-                    placeholder="Qty Req"
-                    value={row.qty_requested}
-                    onChange={(e) => {
-                      const next = [...items];
-                      next[idx] = { ...row, qty_requested: Number(e.target.value) };
-                      updateField('items', next);
-                    }}
-                    className="col-span-2 border rounded-lg px-2.5 py-1.5 text-xs"
-                  />
+                  <div className="col-span-5" data-field={`item_${idx}_description`}>
+                    <input
+                      type="text"
+                      placeholder="Item Description *"
+                      value={row.description}
+                      onChange={(e) => {
+                        const next = [...items];
+                        next[idx] = { ...row, description: e.target.value };
+                        updateField('items', next);
+                        clearFieldError(`item_${idx}_description`);
+                        clearFieldError('items');
+                      }}
+                      className={getInputClass(`item_${idx}_description`, 'w-full border rounded-lg px-2.5 py-1.5 text-xs')}
+                    />
+                    {renderFieldError(`item_${idx}_description`)}
+                  </div>
+                  <div className="col-span-2" data-field={`item_${idx}_qty_requested`}>
+                    <input
+                      type="number"
+                      min={1}
+                      placeholder="Qty Req"
+                      value={row.qty_requested}
+                      onChange={(e) => {
+                        const next = [...items];
+                        next[idx] = { ...row, qty_requested: Number(e.target.value) };
+                        updateField('items', next);
+                        clearFieldError(`item_${idx}_qty_requested`);
+                        clearFieldError('items');
+                      }}
+                      className={getInputClass(`item_${idx}_qty_requested`, 'w-full border rounded-lg px-2.5 py-1.5 text-xs')}
+                    />
+                    {renderFieldError(`item_${idx}_qty_requested`)}
+                  </div>
                   <input
                     type="text"
                     placeholder="Additional Information"
@@ -2894,7 +3406,7 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                     type="button"
                     disabled={items.length <= 1}
                     onClick={() => updateField('items', items.filter((_, i) => i !== idx))}
-                    className="col-span-1 text-red-500 hover:text-red-700 disabled:opacity-30 flex justify-center"
+                    className="col-span-1 text-red-500 hover:text-red-700 disabled:opacity-30 flex justify-center pt-2"
                   >
                     <Trash2 className="w-4 h-4" />
                   </button>
@@ -2953,74 +3465,94 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                   <option value="PURCHASE">Purchase</option>
                 </select>
               </div>
-              <div>
+              <div data-field="cost_centre">
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
                   Cost Centre *
                 </label>
                 <input
                   type="text"
                   value={payload.cost_centre || ''}
-                  onChange={(e) => updateField('cost_centre', e.target.value)}
-                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  onChange={(e) => {
+                    updateField('cost_centre', e.target.value);
+                    clearFieldError('cost_centre');
+                  }}
+                  className={getInputClass('cost_centre', 'w-full border rounded-lg px-3 py-2 text-sm')}
                 />
+                {renderFieldError('cost_centre')}
               </div>
-              <div>
+              <div data-field="imprest_recipient">
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
                   Imprest Recipient *
                 </label>
                 <input
                   type="text"
                   value={payload.imprest_recipient || ''}
-                  onChange={(e) => updateField('imprest_recipient', e.target.value)}
-                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  onChange={(e) => {
+                    updateField('imprest_recipient', e.target.value);
+                    clearFieldError('imprest_recipient');
+                  }}
+                  className={getInputClass('imprest_recipient', 'w-full border rounded-lg px-3 py-2 text-sm')}
                 />
+                {renderFieldError('imprest_recipient')}
               </div>
-              <div>
+              <div data-field="currency">
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
                   Currency *
                 </label>
                 <select
                   value={payload.currency || 'ZMW'}
-                  onChange={(e) => updateField('currency', e.target.value)}
-                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  onChange={(e) => {
+                    updateField('currency', e.target.value);
+                    clearFieldError('currency');
+                  }}
+                  className={getInputClass('currency', 'w-full border rounded-lg px-3 py-2 text-sm')}
                 >
                   <option value="ZMW">ZMW</option>
                   <option value="USD">USD</option>
                   <option value="ZAR">ZAR</option>
                   <option value="EUR">EUR</option>
                 </select>
+                {renderFieldError('currency')}
               </div>
             </div>
 
             {/* Table 1: Amounts Requested */}
-            <div className="space-y-2">
+            <div data-field="amounts_requested" className="space-y-2">
               <div className="flex justify-between items-center">
                 <label className="text-xs font-bold text-slate-800">
-                  Part A: Description of Amount(s) Requested (Imprest Advance)
+                  Part A: Description of Amount(s) Requested (Imprest Advance) *
                 </label>
                 <button
                   type="button"
-                  onClick={() =>
-                    recalc([...reqItems, { description: '', qty: 1, unit_cost: 0 }], retItems)
-                  }
+                  onClick={() => {
+                    recalc([...reqItems, { description: '', qty: 1, unit_cost: 0 }], retItems);
+                    clearFieldError('amounts_requested');
+                  }}
                   className="inline-flex items-center gap-1 text-xs font-semibold text-blue-600"
                 >
                   <Plus className="w-3.5 h-3.5" /> Add Advance Line
                 </button>
               </div>
+              {renderFieldError('amounts_requested')}
+
               {reqItems.map((row, idx) => (
-                <div key={idx} className="grid grid-cols-12 gap-2 items-center">
-                  <input
-                    type="text"
-                    placeholder="Description of amount requested"
-                    value={row.description}
-                    onChange={(e) => {
-                      const next = [...reqItems];
-                      next[idx] = { ...row, description: e.target.value };
-                      recalc(next, retItems);
-                    }}
-                    className="col-span-6 border rounded-lg px-2.5 py-1.5 text-xs"
-                  />
+                <div key={idx} className="grid grid-cols-12 gap-2 items-start">
+                  <div className="col-span-6" data-field={`req_${idx}_description`}>
+                    <input
+                      type="text"
+                      placeholder="Description of amount requested *"
+                      value={row.description}
+                      onChange={(e) => {
+                        const next = [...reqItems];
+                        next[idx] = { ...row, description: e.target.value };
+                        recalc(next, retItems);
+                        clearFieldError(`req_${idx}_description`);
+                        clearFieldError('amounts_requested');
+                      }}
+                      className={getInputClass(`req_${idx}_description`, 'w-full border rounded-lg px-2.5 py-1.5 text-xs')}
+                    />
+                    {renderFieldError(`req_${idx}_description`)}
+                  </div>
                   <input
                     type="number"
                     min={1}
@@ -3033,24 +3565,29 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                     }}
                     className="col-span-2 border rounded-lg px-2 py-1.5 text-xs"
                   />
-                  <input
-                    type="number"
-                    placeholder="Cost/Unit"
-                    value={row.unit_cost}
-                    onChange={(e) => {
-                      const next = [...reqItems];
-                      next[idx] = { ...row, unit_cost: Number(e.target.value) };
-                      recalc(next, retItems);
-                    }}
-                    className="col-span-3 border rounded-lg px-2 py-1.5 text-xs"
-                  />
+                  <div className="col-span-3" data-field={`req_${idx}_unit_cost`}>
+                    <input
+                      type="number"
+                      placeholder="Cost/Unit *"
+                      value={row.unit_cost}
+                      onChange={(e) => {
+                        const next = [...reqItems];
+                        next[idx] = { ...row, unit_cost: Number(e.target.value) };
+                        recalc(next, retItems);
+                        clearFieldError(`req_${idx}_unit_cost`);
+                        clearFieldError('amounts_requested');
+                      }}
+                      className={getInputClass(`req_${idx}_unit_cost`, 'w-full border rounded-lg px-2.5 py-1.5 text-xs')}
+                    />
+                    {renderFieldError(`req_${idx}_unit_cost`)}
+                  </div>
                   <button
                     type="button"
                     disabled={reqItems.length <= 1}
                     onClick={() =>
                       recalc(reqItems.filter((_, i) => i !== idx), retItems)
                     }
-                    className="col-span-1 text-red-500 flex justify-center"
+                    className="col-span-1 text-red-500 flex justify-center pt-2"
                   >
                     <Trash2 className="w-4 h-4" />
                   </button>
@@ -3183,36 +3720,47 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
         return (
           <div className="space-y-5">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div>
+              <div data-field="cost_centre">
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
                   Cost Centre *
                 </label>
                 <input
                   type="text"
                   value={payload.cost_centre || ''}
-                  onChange={(e) => updateField('cost_centre', e.target.value)}
-                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  onChange={(e) => {
+                    updateField('cost_centre', e.target.value);
+                    clearFieldError('cost_centre');
+                  }}
+                  className={getInputClass('cost_centre', 'w-full border rounded-lg px-3 py-2 text-sm')}
                 />
+                {renderFieldError('cost_centre')}
               </div>
-              <div>
+              <div data-field="available_budget">
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
                   Available Budget *
                 </label>
                 <input
                   type="number"
-                  value={payload.available_budget || ''}
-                  onChange={(e) => updatePrItems(items, Number(e.target.value))}
-                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  value={payload.available_budget ?? ''}
+                  onChange={(e) => {
+                    updatePrItems(items, e.target.value === '' ? '' : Number(e.target.value));
+                    clearFieldError('available_budget');
+                  }}
+                  className={getInputClass('available_budget', 'w-full border rounded-lg px-3 py-2 text-sm')}
                 />
+                {renderFieldError('available_budget')}
               </div>
-              <div>
+              <div data-field="currency">
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
                   Currency *
                 </label>
                 <select
                   value={payload.currency || 'ZMW'}
-                  onChange={(e) => updateField('currency', e.target.value)}
-                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  onChange={(e) => {
+                    updateField('currency', e.target.value);
+                    clearFieldError('currency');
+                  }}
+                  className={getInputClass('currency', 'w-full border rounded-lg px-3 py-2 text-sm')}
                 >
                   <option value="ZMW">ZMW</option>
                   <option value="USD">USD</option>
@@ -3220,19 +3768,24 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                   <option value="ZAR">ZAR</option>
                   <option value="EUR">EUR</option>
                 </select>
+                {renderFieldError('currency')}
               </div>
-              <div>
+              <div data-field="budget_type">
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
                   Budget Status *
                 </label>
                 <select
                   value={payload.budget_type || 'REGULAR_BUDGET'}
-                  onChange={(e) => updateField('budget_type', e.target.value)}
-                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  onChange={(e) => {
+                    updateField('budget_type', e.target.value);
+                    clearFieldError('budget_type');
+                  }}
+                  className={getInputClass('budget_type', 'w-full border rounded-lg px-3 py-2 text-sm')}
                 >
                   <option value="REGULAR_BUDGET">Regular Budget</option>
                   <option value="OUTSIDE_BUDGET">Outside Budget</option>
                 </select>
+                {renderFieldError('budget_type')}
               </div>
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
@@ -3258,87 +3811,114 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
               </div>
             </div>
 
-            <div className="space-y-2">
+            <div data-field="items" className="space-y-2">
               <div className="flex justify-between items-center">
                 <label className="text-xs font-bold text-slate-800">
                   PR Line Items (Description, Cost Code, Needed By, Qty, Cost/Unit) *
                 </label>
                 <button
                   type="button"
-                  onClick={() =>
+                  onClick={() => {
                     updatePrItems([
                       ...items,
                       { description: '', cost_code: '', needed_by: '', qty: 1, unit_cost: 0 },
-                    ])
-                  }
+                    ]);
+                    clearFieldError('items');
+                  }}
                   className="inline-flex items-center gap-1 text-xs font-semibold text-blue-600"
                 >
                   <Plus className="w-3.5 h-3.5" /> Add PR Line
                 </button>
               </div>
+              {renderFieldError('items')}
 
               {items.map((row, idx) => (
-                <div key={idx} className="grid grid-cols-12 gap-2 items-center">
-                  <input
-                    type="text"
-                    placeholder="Description *"
-                    value={row.description}
-                    onChange={(e) => {
-                      const next = [...items];
-                      next[idx] = { ...row, description: e.target.value };
-                      updatePrItems(next);
-                    }}
-                    className="col-span-4 border rounded-lg px-2 py-1.5 text-xs"
-                  />
-                  <input
-                    type="text"
-                    placeholder="Cost Code"
-                    value={row.cost_code}
-                    onChange={(e) => {
-                      const next = [...items];
-                      next[idx] = { ...row, cost_code: e.target.value };
-                      updatePrItems(next);
-                    }}
-                    className="col-span-2 border rounded-lg px-2 py-1.5 text-xs"
-                  />
-                  <input
-                    type="date"
-                    value={row.needed_by}
-                    onChange={(e) => {
-                      const next = [...items];
-                      next[idx] = { ...row, needed_by: e.target.value };
-                      updatePrItems(next);
-                    }}
-                    className="col-span-2 border rounded-lg px-2 py-1.5 text-xs"
-                  />
-                  <input
-                    type="number"
-                    min={1}
-                    placeholder="Qty"
-                    value={row.qty}
-                    onChange={(e) => {
-                      const next = [...items];
-                      next[idx] = { ...row, qty: Number(e.target.value) };
-                      updatePrItems(next);
-                    }}
-                    className="col-span-1 border rounded-lg px-2 py-1.5 text-xs"
-                  />
-                  <input
-                    type="number"
-                    placeholder="Unit Cost"
-                    value={row.unit_cost}
-                    onChange={(e) => {
-                      const next = [...items];
-                      next[idx] = { ...row, unit_cost: Number(e.target.value) };
-                      updatePrItems(next);
-                    }}
-                    className="col-span-2 border rounded-lg px-2 py-1.5 text-xs"
-                  />
+                <div key={idx} className="grid grid-cols-12 gap-2 items-start">
+                  <div className="col-span-4" data-field={`pr_${idx}_description`}>
+                    <input
+                      type="text"
+                      placeholder="Description *"
+                      value={row.description}
+                      onChange={(e) => {
+                        const next = [...items];
+                        next[idx] = { ...row, description: e.target.value };
+                        updatePrItems(next);
+                        clearFieldError(`pr_${idx}_description`);
+                        clearFieldError('items');
+                      }}
+                      className={getInputClass(`pr_${idx}_description`, 'w-full border rounded-lg px-2 py-1.5 text-xs')}
+                    />
+                    {renderFieldError(`pr_${idx}_description`)}
+                  </div>
+                  <div className="col-span-2" data-field={`pr_${idx}_cost_code`}>
+                    <input
+                      type="text"
+                      placeholder="Cost Code *"
+                      value={row.cost_code}
+                      onChange={(e) => {
+                        const next = [...items];
+                        next[idx] = { ...row, cost_code: e.target.value };
+                        updatePrItems(next);
+                        clearFieldError(`pr_${idx}_cost_code`);
+                        clearFieldError('items');
+                      }}
+                      className={getInputClass(`pr_${idx}_cost_code`, 'w-full border rounded-lg px-2 py-1.5 text-xs')}
+                    />
+                    {renderFieldError(`pr_${idx}_cost_code`)}
+                  </div>
+                  <div className="col-span-2" data-field={`pr_${idx}_needed_by`}>
+                    <input
+                      type="date"
+                      value={row.needed_by}
+                      onChange={(e) => {
+                        const next = [...items];
+                        next[idx] = { ...row, needed_by: e.target.value };
+                        updatePrItems(next);
+                        clearFieldError(`pr_${idx}_needed_by`);
+                        clearFieldError('items');
+                      }}
+                      className={getInputClass(`pr_${idx}_needed_by`, 'w-full border rounded-lg px-2 py-1.5 text-xs')}
+                    />
+                    {renderFieldError(`pr_${idx}_needed_by`)}
+                  </div>
+                  <div className="col-span-1" data-field={`pr_${idx}_qty`}>
+                    <input
+                      type="number"
+                      min={1}
+                      placeholder="Qty"
+                      value={row.qty}
+                      onChange={(e) => {
+                        const next = [...items];
+                        next[idx] = { ...row, qty: Number(e.target.value) };
+                        updatePrItems(next);
+                        clearFieldError(`pr_${idx}_qty`);
+                        clearFieldError('items');
+                      }}
+                      className={getInputClass(`pr_${idx}_qty`, 'w-full border rounded-lg px-2 py-1.5 text-xs')}
+                    />
+                    {renderFieldError(`pr_${idx}_qty`)}
+                  </div>
+                  <div className="col-span-2" data-field={`pr_${idx}_unit_cost`}>
+                    <input
+                      type="number"
+                      placeholder="Unit Cost *"
+                      value={row.unit_cost}
+                      onChange={(e) => {
+                        const next = [...items];
+                        next[idx] = { ...row, unit_cost: Number(e.target.value) };
+                        updatePrItems(next);
+                        clearFieldError(`pr_${idx}_unit_cost`);
+                        clearFieldError('items');
+                      }}
+                      className={getInputClass(`pr_${idx}_unit_cost`, 'w-full border rounded-lg px-2 py-1.5 text-xs')}
+                    />
+                    {renderFieldError(`pr_${idx}_unit_cost`)}
+                  </div>
                   <button
                     type="button"
                     disabled={items.length <= 1}
                     onClick={() => updatePrItems(items.filter((_, i) => i !== idx))}
-                    className="col-span-1 text-red-500 flex justify-center"
+                    className="col-span-1 text-red-500 flex justify-center pt-2"
                   >
                     <Trash2 className="w-4 h-4" />
                   </button>
@@ -3389,6 +3969,7 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
               (a) => `${a.area_title || 'Responsibility'}: ${a.area_description}`
             ),
           }));
+          clearFieldError('responsibilities');
         };
 
         return (
@@ -3399,7 +3980,7 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                 Job Overview & Reporting Structure
               </span>
               <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-                <div className="md:col-span-2">
+                <div data-field="position" className="md:col-span-2">
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
                     Position Title *
                   </label>
@@ -3409,12 +3990,14 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                     onChange={(e) => {
                       updateField('position', e.target.value);
                       updateField('job_title', e.target.value);
+                      clearFieldError('position');
                     }}
                     placeholder="e.g. Head of Humanities / Secondary Teacher"
-                    className="w-full bg-white border rounded-lg px-3 py-2 text-sm"
+                    className={getInputClass('position', 'w-full bg-white border rounded-lg px-3 py-2 text-sm')}
                   />
+                  {renderFieldError('position')}
                 </div>
-                <div>
+                <div data-field="location">
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
                     Location / School *
                   </label>
@@ -3424,39 +4007,49 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                     onChange={(e) => {
                       updateField('location', e.target.value);
                       updateField('department', e.target.value);
+                      clearFieldError('location');
                     }}
                     placeholder="e.g. Sentinel Kabitaka"
-                    className="w-full bg-white border rounded-lg px-3 py-2 text-sm"
+                    className={getInputClass('location', 'w-full bg-white border rounded-lg px-3 py-2 text-sm')}
                   />
+                  {renderFieldError('location')}
                 </div>
-                <div>
+                <div data-field="effective_date">
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
                     Effective Date *
                   </label>
                   <input
                     type="date"
                     value={payload.effective_date || ''}
-                    onChange={(e) => updateField('effective_date', e.target.value)}
-                    className="w-full bg-white border rounded-lg px-3 py-2 text-sm"
+                    onChange={(e) => {
+                      updateField('effective_date', e.target.value);
+                      clearFieldError('effective_date');
+                    }}
+                    className={getInputClass('effective_date', 'w-full bg-white border rounded-lg px-3 py-2 text-sm')}
                   />
+                  {renderFieldError('effective_date')}
                 </div>
-                <div className="md:col-span-4">
+                <div data-field="reports_to" className="md:col-span-4">
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
                     Reports To *
                   </label>
                   <input
                     type="text"
                     value={payload.reports_to || ''}
-                    onChange={(e) => updateField('reports_to', e.target.value)}
+                    onChange={(e) => {
+                      updateField('reports_to', e.target.value);
+                      clearFieldError('reports_to');
+                    }}
                     placeholder="e.g. Deputy Head / Head of School"
-                    className="w-full bg-white border rounded-lg px-3 py-2 text-sm"
+                    className={getInputClass('reports_to', 'w-full bg-white border rounded-lg px-3 py-2 text-sm')}
                   />
+                  {renderFieldError('reports_to')}
                 </div>
               </div>
             </div>
 
             {/* Mission */}
-            <div>
+            <div data-field="mission">
               <label className="block text-xs font-bold text-slate-800 mb-1">
                 Mission / Job Purpose *
               </label>
@@ -3466,10 +4059,14 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
               <textarea
                 rows={3}
                 value={payload.mission || ''}
-                onChange={(e) => updateField('mission', e.target.value)}
+                onChange={(e) => {
+                  updateField('mission', e.target.value);
+                  clearFieldError('mission');
+                }}
                 placeholder="Overall purpose of the position within Educore Services..."
-                className="w-full border rounded-lg px-3 py-2 text-sm"
+                className={getInputClass('mission', 'w-full border rounded-lg px-3 py-2 text-sm')}
               />
+              {renderFieldError('mission')}
             </div>
 
             {/* Job Criteria 1 to 5 */}
@@ -3479,7 +4076,7 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
               </span>
 
               <div className="space-y-3">
-                <div>
+                <div data-field="education_criteria">
                   <label className="block text-xs font-bold text-slate-800 mb-1">
                     1. Education Criteria *
                   </label>
@@ -3489,13 +4086,17 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                   <textarea
                     rows={2}
                     value={payload.education_criteria || ''}
-                    onChange={(e) => updateField('education_criteria', e.target.value)}
+                    onChange={(e) => {
+                      updateField('education_criteria', e.target.value);
+                      clearFieldError('education_criteria');
+                    }}
                     placeholder="e.g. Bachelor's Degree in relevant discipline with Teaching Diploma / TCZ registration..."
-                    className="w-full bg-white border rounded-lg px-3 py-2 text-sm"
+                    className={getInputClass('education_criteria', 'w-full bg-white border rounded-lg px-3 py-2 text-sm')}
                   />
+                  {renderFieldError('education_criteria')}
                 </div>
 
-                <div>
+                <div data-field="experience_criteria">
                   <label className="block text-xs font-bold text-slate-800 mb-1">
                     2. Experience Criteria *
                   </label>
@@ -3505,13 +4106,17 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                   <textarea
                     rows={2}
                     value={payload.experience_criteria || ''}
-                    onChange={(e) => updateField('experience_criteria', e.target.value)}
+                    onChange={(e) => {
+                      updateField('experience_criteria', e.target.value);
+                      clearFieldError('experience_criteria');
+                    }}
                     placeholder="e.g. Minimum 3-5 years teaching Cambridge IGCSE / A-Level curriculum..."
-                    className="w-full bg-white border rounded-lg px-3 py-2 text-sm"
+                    className={getInputClass('experience_criteria', 'w-full bg-white border rounded-lg px-3 py-2 text-sm')}
                   />
+                  {renderFieldError('experience_criteria')}
                 </div>
 
-                <div>
+                <div data-field="available_tools">
                   <label className="block text-xs font-bold text-slate-800 mb-1">
                     3. Available Tools *
                   </label>
@@ -3521,13 +4126,17 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                   <input
                     type="text"
                     value={payload.available_tools || ''}
-                    onChange={(e) => updateField('available_tools', e.target.value)}
+                    onChange={(e) => {
+                      updateField('available_tools', e.target.value);
+                      clearFieldError('available_tools');
+                    }}
                     placeholder="e.g. Laptop, Google Workspace, Educore Portal, SMART Board"
-                    className="w-full bg-white border rounded-lg px-3 py-2 text-sm"
+                    className={getInputClass('available_tools', 'w-full bg-white border rounded-lg px-3 py-2 text-sm')}
                   />
+                  {renderFieldError('available_tools')}
                 </div>
 
-                <div>
+                <div data-field="qualities">
                   <label className="block text-xs font-bold text-slate-800 mb-1">
                     4. Qualities *
                   </label>
@@ -3537,13 +4146,17 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                   <textarea
                     rows={2}
                     value={payload.qualities || ''}
-                    onChange={(e) => updateField('qualities', e.target.value)}
+                    onChange={(e) => {
+                      updateField('qualities', e.target.value);
+                      clearFieldError('qualities');
+                    }}
                     placeholder="e.g. High emotional intelligence, collaborative, punctual, resilient..."
-                    className="w-full bg-white border rounded-lg px-3 py-2 text-sm"
+                    className={getInputClass('qualities', 'w-full bg-white border rounded-lg px-3 py-2 text-sm')}
                   />
+                  {renderFieldError('qualities')}
                 </div>
 
-                <div>
+                <div data-field="organisation_and_reporting">
                   <label className="block text-xs font-bold text-slate-800 mb-1">
                     5. Organisation & Reporting *
                   </label>
@@ -3553,16 +4166,20 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                   <textarea
                     rows={2}
                     value={payload.organisation_and_reporting || ''}
-                    onChange={(e) => updateField('organisation_and_reporting', e.target.value)}
+                    onChange={(e) => {
+                      updateField('organisation_and_reporting', e.target.value);
+                      clearFieldError('organisation_and_reporting');
+                    }}
                     placeholder="Role placement, supervisory authority, list of direct subordinates by title..."
-                    className="w-full bg-white border rounded-lg px-3 py-2 text-sm"
+                    className={getInputClass('organisation_and_reporting', 'w-full bg-white border rounded-lg px-3 py-2 text-sm')}
                   />
+                  {renderFieldError('organisation_and_reporting')}
                 </div>
               </div>
             </div>
 
             {/* Section 6: Responsibilities (6.1, 6.2, 6.3...) */}
-            <div className="space-y-3">
+            <div data-field="responsibilities" className="space-y-3">
               <div className="flex justify-between items-center">
                 <div>
                   <label className="text-xs font-bold text-slate-800 block">
@@ -3585,6 +4202,7 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                   <Plus className="w-3.5 h-3.5" /> Add Duty Area
                 </button>
               </div>
+              {renderFieldError('responsibilities')}
 
               {respAreas.map((area: any, idx: number) => (
                 <div key={idx} className="p-3.5 rounded-xl border border-slate-200 bg-slate-50 space-y-2">
@@ -3635,17 +4253,21 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
             </div>
 
             {/* Section 6.5: Assessed Performance */}
-            <div>
+            <div data-field="assessed_performance">
               <label className="block text-xs font-bold text-slate-800 mb-1">
                 Assessed Performance Standards *
               </label>
               <textarea
                 rows={2}
                 value={payload.assessed_performance || ''}
-                onChange={(e) => updateField('assessed_performance', e.target.value)}
+                onChange={(e) => {
+                  updateField('assessed_performance', e.target.value);
+                  clearFieldError('assessed_performance');
+                }}
                 placeholder="Indicate key performance indicators (KPIs) and appraisal framework..."
-                className="w-full border rounded-lg px-3 py-2 text-sm"
+                className={getInputClass('assessed_performance', 'w-full border rounded-lg px-3 py-2 text-sm')}
               />
+              {renderFieldError('assessed_performance')}
             </div>
 
             {/* Section 7: Annex */}
@@ -3668,13 +4290,6 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
         );
       }
 
-      default:
-        return (
-          <div className="p-4 bg-slate-50 border rounded-lg text-xs text-slate-600">
-            Please fill in the form details below.
-          </div>
-        );
-
       case 'DISCIPLINARY_CHARGE':
         return (
           <div className="space-y-5">
@@ -3684,29 +4299,37 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                 Charging Officer Details
               </span>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <div>
+                <div data-field="charging_officer_name">
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
                     Name of Charging Officer *
                   </label>
                   <input
                     type="text"
                     value={payload.charging_officer_name || ''}
-                    onChange={(e) => updateField('charging_officer_name', e.target.value)}
-                    className="w-full bg-white border rounded-lg px-3 py-2 text-sm"
+                    onChange={(e) => {
+                      updateField('charging_officer_name', e.target.value);
+                      clearFieldError('charging_officer_name');
+                    }}
+                    className={getInputClass('charging_officer_name', 'w-full bg-white border rounded-lg px-3 py-2 text-sm')}
                   />
+                  {renderFieldError('charging_officer_name')}
                 </div>
-                <div>
+                <div data-field="charging_officer_position">
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
                     Position *
                   </label>
                   <input
                     type="text"
                     value={payload.charging_officer_position || ''}
-                    onChange={(e) => updateField('charging_officer_position', e.target.value)}
-                    className="w-full bg-white border rounded-lg px-3 py-2 text-sm"
+                    onChange={(e) => {
+                      updateField('charging_officer_position', e.target.value);
+                      clearFieldError('charging_officer_position');
+                    }}
+                    className={getInputClass('charging_officer_position', 'w-full bg-white border rounded-lg px-3 py-2 text-sm')}
                   />
+                  {renderFieldError('charging_officer_position')}
                 </div>
-                <div>
+                <div data-field="charging_site">
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
                     Site *
                   </label>
@@ -3716,9 +4339,11 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                     onChange={(e) => {
                       updateField('charging_site', e.target.value);
                       updateField('charging_school', e.target.value);
+                      clearFieldError('charging_site');
                     }}
-                    className="w-full bg-white border rounded-lg px-3 py-2 text-sm"
+                    className={getInputClass('charging_site', 'w-full bg-white border rounded-lg px-3 py-2 text-sm')}
                   />
+                  {renderFieldError('charging_site')}
                 </div>
               </div>
             </div>
@@ -3729,29 +4354,37 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                 Accused Employee Details
               </span>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <div>
+                <div data-field="accused_name">
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
                     Name of the Accused *
                   </label>
                   <input
                     type="text"
                     value={payload.accused_name || ''}
-                    onChange={(e) => updateField('accused_name', e.target.value)}
-                    className="w-full bg-white border rounded-lg px-3 py-2 text-sm"
+                    onChange={(e) => {
+                      updateField('accused_name', e.target.value);
+                      clearFieldError('accused_name');
+                    }}
+                    className={getInputClass('accused_name', 'w-full bg-white border rounded-lg px-3 py-2 text-sm')}
                   />
+                  {renderFieldError('accused_name')}
                 </div>
-                <div>
+                <div data-field="accused_position">
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
                     Position *
                   </label>
                   <input
                     type="text"
                     value={payload.accused_position || ''}
-                    onChange={(e) => updateField('accused_position', e.target.value)}
-                    className="w-full bg-white border rounded-lg px-3 py-2 text-sm"
+                    onChange={(e) => {
+                      updateField('accused_position', e.target.value);
+                      clearFieldError('accused_position');
+                    }}
+                    className={getInputClass('accused_position', 'w-full bg-white border rounded-lg px-3 py-2 text-sm')}
                   />
+                  {renderFieldError('accused_position')}
                 </div>
-                <div>
+                <div data-field="accused_man_no">
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
                     Man No. (Employee #) *
                   </label>
@@ -3759,11 +4392,15 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                     type="text"
                     placeholder="e.g., EDC-1042"
                     value={payload.accused_man_no || ''}
-                    onChange={(e) => updateField('accused_man_no', e.target.value)}
-                    className="w-full bg-white border rounded-lg px-3 py-2 text-sm"
+                    onChange={(e) => {
+                      updateField('accused_man_no', e.target.value);
+                      clearFieldError('accused_man_no');
+                    }}
+                    className={getInputClass('accused_man_no', 'w-full bg-white border rounded-lg px-3 py-2 text-sm')}
                   />
+                  {renderFieldError('accused_man_no')}
                 </div>
-                <div className="md:col-span-2">
+                <div data-field="accused_dept_site" className="md:col-span-2">
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
                     Department / Site *
                   </label>
@@ -3773,47 +4410,61 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                     onChange={(e) => {
                       updateField('accused_dept_site', e.target.value);
                       updateField('accused_dept_school', e.target.value);
+                      clearFieldError('accused_dept_site');
                     }}
-                    className="w-full bg-white border rounded-lg px-3 py-2 text-sm"
+                    className={getInputClass('accused_dept_site', 'w-full bg-white border rounded-lg px-3 py-2 text-sm')}
                   />
+                  {renderFieldError('accused_dept_site')}
                 </div>
-                <div>
+                <div data-field="date_of_charge">
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
                     Date of Charge *
                   </label>
                   <input
                     type="date"
                     value={payload.date_of_charge || ''}
-                    onChange={(e) => updateField('date_of_charge', e.target.value)}
-                    className="w-full bg-white border rounded-lg px-3 py-2 text-sm"
+                    onChange={(e) => {
+                      updateField('date_of_charge', e.target.value);
+                      clearFieldError('date_of_charge');
+                    }}
+                    className={getInputClass('date_of_charge', 'w-full bg-white border rounded-lg px-3 py-2 text-sm')}
                   />
+                  {renderFieldError('date_of_charge')}
                 </div>
               </div>
             </div>
 
             {/* Offence Particulars */}
             <div className="space-y-4">
-              <div>
+              <div data-field="nature_of_offence">
                 <label className="block text-xs font-bold text-slate-800 mb-1">
                   1. Nature of the Offence (As per Code of Conduct) *
                 </label>
                 <textarea
                   rows={3}
                   value={payload.nature_of_offence || ''}
-                  onChange={(e) => updateField('nature_of_offence', e.target.value)}
-                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  onChange={(e) => {
+                    updateField('nature_of_offence', e.target.value);
+                    clearFieldError('nature_of_offence');
+                  }}
+                  className={getInputClass('nature_of_offence', 'w-full border rounded-lg px-3 py-2 text-sm')}
                 />
+                {renderFieldError('nature_of_offence')}
               </div>
-              <div>
+              <div data-field="brief_account_of_offence">
                 <label className="block text-xs font-bold text-slate-800 mb-1">
                   2. Brief Account of the Offence (As per investigation done) *
                 </label>
                 <textarea
                   rows={4}
                   value={payload.brief_account_of_offence || ''}
-                  onChange={(e) => updateField('brief_account_of_offence', e.target.value)}
-                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  onChange={(e) => {
+                    updateField('brief_account_of_offence', e.target.value);
+                    clearFieldError('brief_account_of_offence');
+                  }}
+                  className={getInputClass('brief_account_of_offence', 'w-full border rounded-lg px-3 py-2 text-sm')}
                 />
+                {renderFieldError('brief_account_of_offence')}
               </div>
 
               <div className="p-4 rounded-xl bg-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -3862,6 +4513,7 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
             ? selectedCats.filter((c) => c !== cat)
             : [...selectedCats, cat];
           updateField('treatment_categories', next);
+          clearFieldError('treatment_categories');
         };
 
         const updateClaimRows = (nextRows: any[]) => {
@@ -3884,16 +4536,20 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                 1. Member & Patient Information
               </span>
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
-                <div>
+                <div data-field="employee_number">
                   <label className="block text-[11px] font-semibold text-slate-600 mb-1">
                     Employee Number *
                   </label>
                   <input
                     type="text"
                     value={payload.employee_number || ''}
-                    onChange={(e) => updateField('employee_number', e.target.value)}
-                    className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs"
+                    onChange={(e) => {
+                      updateField('employee_number', e.target.value);
+                      clearFieldError('employee_number');
+                    }}
+                    className={getInputClass('employee_number', 'w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs')}
                   />
+                  {renderFieldError('employee_number')}
                 </div>
                 <div>
                   <label className="block text-[11px] font-semibold text-slate-600 mb-1">
@@ -3920,54 +4576,70 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                     <option value="FEMALE">Female</option>
                   </select>
                 </div>
-                <div>
+                <div data-field="mobile">
                   <label className="block text-[11px] font-semibold text-slate-600 mb-1">
                     Mobile *
                   </label>
                   <input
                     type="tel"
                     value={payload.mobile || ''}
-                    onChange={(e) => updateField('mobile', e.target.value)}
-                    className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs"
+                    onChange={(e) => {
+                      updateField('mobile', e.target.value);
+                      clearFieldError('mobile');
+                    }}
+                    className={getInputClass('mobile', 'w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs')}
                   />
+                  {renderFieldError('mobile')}
                 </div>
-                <div>
+                <div data-field="patient_first_name">
                   <label className="block text-[11px] font-semibold text-slate-600 mb-1">
                     Patient First Name *
                   </label>
                   <input
                     type="text"
                     value={payload.patient_first_name || ''}
-                    onChange={(e) => updateField('patient_first_name', e.target.value)}
-                    className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs"
+                    onChange={(e) => {
+                      updateField('patient_first_name', e.target.value);
+                      clearFieldError('patient_first_name');
+                    }}
+                    className={getInputClass('patient_first_name', 'w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs')}
                   />
+                  {renderFieldError('patient_first_name')}
                 </div>
-                <div>
+                <div data-field="patient_surname">
                   <label className="block text-[11px] font-semibold text-slate-600 mb-1">
                     Patient Surname *
                   </label>
                   <input
                     type="text"
                     value={payload.patient_surname || ''}
-                    onChange={(e) => updateField('patient_surname', e.target.value)}
-                    className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs"
+                    onChange={(e) => {
+                      updateField('patient_surname', e.target.value);
+                      clearFieldError('patient_surname');
+                    }}
+                    className={getInputClass('patient_surname', 'w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs')}
                   />
+                  {renderFieldError('patient_surname')}
                 </div>
-                <div className="sm:col-span-2">
+                <div data-field="email" className="sm:col-span-2">
                   <label className="block text-[11px] font-semibold text-slate-600 mb-1">
                     Email *
                   </label>
                   <input
                     type="email"
                     value={payload.email || ''}
-                    onChange={(e) => updateField('email', e.target.value)}
-                    className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs"
+                    onChange={(e) => {
+                      updateField('email', e.target.value);
+                      clearFieldError('email');
+                    }}
+                    className={getInputClass('email', 'w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs')}
                   />
+                  {renderFieldError('email')}
                 </div>
               </div>
 
               {/* Treatment Category Multi-Select Checkboxes */}
-              <div className="pt-2">
+              <div data-field="treatment_categories" className="pt-2">
                 <label className="block text-[11px] font-semibold text-slate-600 mb-1.5">
                   Service / Treatment Categories (Select all that apply) *
                 </label>
@@ -3990,56 +4662,67 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                     );
                   })}
                 </div>
+                {renderFieldError('treatment_categories')}
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-2">
-                <div>
+                <div data-field="date_of_treatment">
                   <label className="block text-[11px] font-semibold text-slate-600 mb-1">
                     Date of Treatment * (Claims older than 90 days are invalid)
                   </label>
                   <input
                     type="date"
                     value={payload.date_of_treatment || ''}
-                    onChange={(e) => updateField('date_of_treatment', e.target.value)}
-                    className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs"
+                    onChange={(e) => {
+                      updateField('date_of_treatment', e.target.value);
+                      clearFieldError('date_of_treatment');
+                    }}
+                    className={getInputClass('date_of_treatment', 'w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs')}
                   />
+                  {renderFieldError('date_of_treatment')}
                 </div>
-                <div>
+                <div data-field="hospital_name">
                   <label className="block text-[11px] font-semibold text-slate-600 mb-1">
                     Hospital / Clinic Where Treatment Occurred *
                   </label>
                   <input
                     type="text"
                     value={payload.hospital_name || ''}
-                    onChange={(e) => updateField('hospital_name', e.target.value)}
-                    className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs"
+                    onChange={(e) => {
+                      updateField('hospital_name', e.target.value);
+                      clearFieldError('hospital_name');
+                    }}
+                    className={getInputClass('hospital_name', 'w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs')}
                   />
+                  {renderFieldError('hospital_name')}
                 </div>
-                <div className="md:col-span-2">
+                <div data-field="symptoms_and_treatment_details" className="md:col-span-2">
                   <label className="block text-[11px] font-semibold text-slate-600 mb-1">
                     Full Details of Symptoms / Medical Conditions & Treatment Received *
                   </label>
                   <textarea
                     rows={2}
                     value={payload.symptoms_and_treatment_details || ''}
-                    onChange={(e) =>
-                      updateField('symptoms_and_treatment_details', e.target.value)
-                    }
-                    className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs"
+                    onChange={(e) => {
+                      updateField('symptoms_and_treatment_details', e.target.value);
+                      clearFieldError('symptoms_and_treatment_details');
+                    }}
+                    className={getInputClass('symptoms_and_treatment_details', 'w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs')}
                   />
+                  {renderFieldError('symptoms_and_treatment_details')}
                 </div>
               </div>
             </div>
 
             {/* 2. Claim Details Repeater Table */}
-            <div className="space-y-2">
+            <div data-field="claim_items" className="space-y-2">
               <div className="flex justify-between items-center">
                 <label className="text-xs font-bold text-slate-800">
                   2. Claim Details (Description, Provider's Name, Amount Charged, Invoice No) *
                 </label>
                 <button
                   type="button"
-                  onClick={() =>
+                  onClick={() => {
                     updateClaimRows([
                       ...claimItems,
                       {
@@ -4048,49 +4731,66 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                         amount_charged: 0,
                         invoice_no: '',
                       },
-                    ])
-                  }
+                    ]);
+                    clearFieldError('claim_items');
+                  }}
                   className="inline-flex items-center gap-1 text-xs font-semibold text-blue-600"
                 >
                   <Plus className="w-3.5 h-3.5" /> Add Claim Line
                 </button>
               </div>
+              {renderFieldError('claim_items')}
 
               {claimItems.map((row, idx) => (
-                <div key={idx} className="grid grid-cols-12 gap-2 items-center">
-                  <input
-                    type="text"
-                    placeholder="Description of Expense / Treatment *"
-                    value={row.description}
-                    onChange={(e) => {
-                      const next = [...claimItems];
-                      next[idx] = { ...row, description: e.target.value };
-                      updateClaimRows(next);
-                    }}
-                    className="col-span-4 border rounded-lg px-2.5 py-1.5 text-xs"
-                  />
-                  <input
-                    type="text"
-                    placeholder="Provider's Name *"
-                    value={row.provider_name}
-                    onChange={(e) => {
-                      const next = [...claimItems];
-                      next[idx] = { ...row, provider_name: e.target.value };
-                      updateClaimRows(next);
-                    }}
-                    className="col-span-3 border rounded-lg px-2.5 py-1.5 text-xs"
-                  />
-                  <input
-                    type="number"
-                    placeholder="Amount (ZMW) *"
-                    value={row.amount_charged}
-                    onChange={(e) => {
-                      const next = [...claimItems];
-                      next[idx] = { ...row, amount_charged: Number(e.target.value) };
-                      updateClaimRows(next);
-                    }}
-                    className="col-span-2 border rounded-lg px-2.5 py-1.5 text-xs"
-                  />
+                <div key={idx} className="grid grid-cols-12 gap-2 items-start">
+                  <div className="col-span-4" data-field={`claim_${idx}_description`}>
+                    <input
+                      type="text"
+                      placeholder="Description of Expense / Treatment *"
+                      value={row.description}
+                      onChange={(e) => {
+                        const next = [...claimItems];
+                        next[idx] = { ...row, description: e.target.value };
+                        updateClaimRows(next);
+                        clearFieldError(`claim_${idx}_description`);
+                        clearFieldError('claim_items');
+                      }}
+                      className={getInputClass(`claim_${idx}_description`, 'w-full border rounded-lg px-2.5 py-1.5 text-xs')}
+                    />
+                    {renderFieldError(`claim_${idx}_description`)}
+                  </div>
+                  <div className="col-span-3" data-field={`claim_${idx}_provider_name`}>
+                    <input
+                      type="text"
+                      placeholder="Provider's Name *"
+                      value={row.provider_name}
+                      onChange={(e) => {
+                        const next = [...claimItems];
+                        next[idx] = { ...row, provider_name: e.target.value };
+                        updateClaimRows(next);
+                        clearFieldError(`claim_${idx}_provider_name`);
+                        clearFieldError('claim_items');
+                      }}
+                      className={getInputClass(`claim_${idx}_provider_name`, 'w-full border rounded-lg px-2.5 py-1.5 text-xs')}
+                    />
+                    {renderFieldError(`claim_${idx}_provider_name`)}
+                  </div>
+                  <div className="col-span-2" data-field={`claim_${idx}_amount_charged`}>
+                    <input
+                      type="number"
+                      placeholder="Amount (ZMW) *"
+                      value={row.amount_charged}
+                      onChange={(e) => {
+                        const next = [...claimItems];
+                        next[idx] = { ...row, amount_charged: Number(e.target.value) };
+                        updateClaimRows(next);
+                        clearFieldError(`claim_${idx}_amount_charged`);
+                        clearFieldError('claim_items');
+                      }}
+                      className={getInputClass(`claim_${idx}_amount_charged`, 'w-full border rounded-lg px-2.5 py-1.5 text-xs')}
+                    />
+                    {renderFieldError(`claim_${idx}_amount_charged`)}
+                  </div>
                   <input
                     type="text"
                     placeholder="Invoice / Receipt #"
@@ -4108,7 +4808,7 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                     onClick={() =>
                       updateClaimRows(claimItems.filter((_, i) => i !== idx))
                     }
-                    className="col-span-1 text-red-500 flex justify-center"
+                    className="col-span-1 text-red-500 flex justify-center pt-2"
                   >
                     <Trash2 className="w-4 h-4" />
                   </button>
@@ -4157,40 +4857,50 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
 
               {payload.payment_method === 'BANK_TRANSFER' && (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-slate-50 p-3.5 rounded-xl border border-slate-200">
-                  <div>
+                  <div data-field="bank_name">
                     <label className="block text-[11px] font-semibold text-slate-600 mb-1">
                       Bank Name *
                     </label>
                     <input
                       type="text"
                       value={payload.bank_name || ''}
-                      onChange={(e) => updateField('bank_name', e.target.value)}
-                      className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs"
+                      onChange={(e) => {
+                        updateField('bank_name', e.target.value);
+                        clearFieldError('bank_name');
+                      }}
+                      className={getInputClass('bank_name', 'w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs')}
                     />
+                    {renderFieldError('bank_name')}
                   </div>
-                  <div>
+                  <div data-field="account_holder_name">
                     <label className="block text-[11px] font-semibold text-slate-600 mb-1">
                       Account Holder Name / Payee *
                     </label>
                     <input
                       type="text"
                       value={payload.account_holder_name || ''}
-                      onChange={(e) =>
-                        updateField('account_holder_name', e.target.value)
-                      }
-                      className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs"
+                      onChange={(e) => {
+                        updateField('account_holder_name', e.target.value);
+                        clearFieldError('account_holder_name');
+                      }}
+                      className={getInputClass('account_holder_name', 'w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs')}
                     />
+                    {renderFieldError('account_holder_name')}
                   </div>
-                  <div>
+                  <div data-field="account_number">
                     <label className="block text-[11px] font-semibold text-slate-600 mb-1">
                       Account Number *
                     </label>
                     <input
                       type="text"
                       value={payload.account_number || ''}
-                      onChange={(e) => updateField('account_number', e.target.value)}
-                      className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs"
+                      onChange={(e) => {
+                        updateField('account_number', e.target.value);
+                        clearFieldError('account_number');
+                      }}
+                      className={getInputClass('account_number', 'w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs')}
                     />
+                    {renderFieldError('account_number')}
                   </div>
                   <div>
                     <label className="block text-[11px] font-semibold text-slate-600 mb-1">
@@ -4209,30 +4919,45 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
 
             {/* 4. Mandatory Medical Consent Declarations */}
             <div className="p-3.5 rounded-xl bg-blue-50/60 border border-blue-200 space-y-2 text-xs">
-              <label className="flex items-center gap-2 font-semibold text-slate-800 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={Boolean(payload.confirm_true_and_correct)}
-                  onChange={(e) =>
-                    updateField('confirm_true_and_correct', e.target.checked)
-                  }
-                />
-                I confirm the information given is true and correct to the best of my knowledge.
-              </label>
-              <label className="flex items-center gap-2 font-semibold text-slate-800 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={Boolean(payload.consent_medical_info_processing)}
-                  onChange={(e) =>
-                    updateField('consent_medical_info_processing', e.target.checked)
-                  }
-                />
-                I consent to Educore Services obtaining and processing medical information related to my claim.
-              </label>
+              <div data-field="confirm_true_and_correct">
+                <label className="flex items-center gap-2 font-semibold text-slate-800 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(payload.confirm_true_and_correct)}
+                    onChange={(e) => {
+                      updateField('confirm_true_and_correct', e.target.checked);
+                      clearFieldError('confirm_true_and_correct');
+                    }}
+                  />
+                  I confirm the information given is true and correct to the best of my knowledge.
+                </label>
+                {renderFieldError('confirm_true_and_correct')}
+              </div>
+              <div data-field="consent_medical_info_processing">
+                <label className="flex items-center gap-2 font-semibold text-slate-800 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(payload.consent_medical_info_processing)}
+                    onChange={(e) => {
+                      updateField('consent_medical_info_processing', e.target.checked);
+                      clearFieldError('consent_medical_info_processing');
+                    }}
+                  />
+                  I consent to Educore Services obtaining and processing medical information related to my claim.
+                </label>
+                {renderFieldError('consent_medical_info_processing')}
+              </div>
             </div>
           </div>
         );
       }
+
+      default:
+        return (
+          <div className="p-4 bg-slate-50 border rounded-lg text-xs text-slate-600">
+            Please fill in the form details below.
+          </div>
+        );
     }
   };
 
@@ -4267,17 +4992,26 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
       </div>
 
       {/* Main Header with Back Button and Actions (Matches 3.png) */}
-      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-2xs p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="bg-white rounded-xl border border-slate-200/80 shadow-2xs p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="flex items-center gap-3">
-          {step > 1 && (
-            <button
+          {step > 1 && !(step === 2 && editApplication) && (
+            <motion.button
               type="button"
-              onClick={() => setStep((s) => (s - 1) as 1 | 2)}
-              className="p-2 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-600 transition cursor-pointer"
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              onClick={() => {
+                setSubmitError(null);
+                if (step === 2) {
+                  handleGoBackToStep1();
+                } else {
+                  setStep(2);
+                }
+              }}
+              className="p-2 rounded-md border border-slate-200 hover:bg-slate-50 text-slate-600 transition cursor-pointer"
               title="Previous step"
             >
               <ArrowLeft className="w-4 h-4" />
-            </button>
+            </motion.button>
           )}
           <div>
             <span className="text-[10px] font-bold uppercase tracking-wider text-blue-600">
@@ -4293,354 +5027,511 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
 
         <div className="flex items-center gap-2.5">
           {onCancel && (
-            <button
+            <motion.button
               type="button"
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
               onClick={onCancel}
-              className="px-4 py-2 rounded-xl border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition cursor-pointer"
+              className="px-4 py-2 rounded-md border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition cursor-pointer"
             >
               Cancel
-            </button>
+            </motion.button>
           )}
           {step === 2 && (
-            <button
+            <motion.button
               type="button"
-              onClick={() => setStep(3)}
-              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-xs font-semibold text-white shadow-2xs transition cursor-pointer"
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              onClick={handleContinueToSignoff}
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-md bg-blue-600 hover:bg-blue-700 text-xs font-semibold text-white shadow-2xs transition cursor-pointer"
             >
               Continue to Sign-off <ArrowRight className="w-4 h-4" />
-            </button>
+            </motion.button>
           )}
           {step === 3 && (
-            <button
+            <motion.button
               type="button"
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
               disabled={
                 submitting ||
                 !digitalSignature.trim() ||
                 (selectedForm?.requires_policy && !termsAccepted)
               }
               onClick={() => handleFinalSubmit(true)}
-              className="inline-flex items-center gap-1.5 px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-xs font-semibold text-white shadow-2xs disabled:opacity-50 transition cursor-pointer"
+              className="inline-flex items-center gap-1.5 px-5 py-2 rounded-md bg-emerald-600 hover:bg-emerald-700 text-xs font-semibold text-white shadow-2xs disabled:opacity-50 transition cursor-pointer"
             >
               <CheckCircle className="w-4 h-4" />
               {submitting ? 'Submitting...' : 'Submit Application'}
-            </button>
+            </motion.button>
           )}
         </div>
       </div>
 
       {submitError && (
-        <div className="p-3.5 rounded-2xl bg-red-50 border border-red-200 text-xs text-red-700 font-medium">
+        <div className="p-3.5 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700 font-medium">
           {submitError}
         </div>
       )}
 
-      {/* Stepper Navigation Tabs (Matches 3.png: General | Advanced / Step Tabs) */}
-      <div className="bg-white rounded-2xl border border-slate-200/80 shadow-2xs px-5 pt-3 pb-0 flex items-center gap-8 text-xs font-semibold">
-        <button
-          type="button"
-          onClick={() => setStep(1)}
-          className={`pb-3 border-b-2 transition cursor-pointer ${
-            step === 1
-              ? 'border-blue-600 text-blue-600 font-bold'
-              : 'border-transparent text-slate-500 hover:text-slate-800'
-          }`}
-        >
-          1. Select Form Type
-        </button>
-        <button
-          type="button"
-          disabled={!selectedForm}
-          onClick={() => selectedForm && setStep(2)}
-          className={`pb-3 border-b-2 transition cursor-pointer ${
-            step === 2
-              ? 'border-blue-600 text-blue-600 font-bold'
-              : 'border-transparent text-slate-500 hover:text-slate-800 disabled:opacity-40'
-          }`}
-        >
-          2. General Form Details
-        </button>
-        <button
-          type="button"
-          disabled={!selectedForm}
-          onClick={() => selectedForm && setStep(3)}
-          className={`pb-3 border-b-2 transition cursor-pointer ${
-            step === 3
-              ? 'border-blue-600 text-blue-600 font-bold'
-              : 'border-transparent text-slate-500 hover:text-slate-800 disabled:opacity-40'
-          }`}
-        >
-          3. Policy &amp; Digital Signature
-        </button>
+      {/* Stepper Navigation Tabs: Cosmetic and for guidance only. Backward navigation allowed only when previous stage details are filled. */}
+      <div className="bg-white rounded-xl border border-slate-200/80 shadow-2xs px-5 pt-3 pb-0 flex items-center gap-8 text-xs font-semibold">
+        {STEP_ITEMS.map((item) => {
+          const isCurrent = step === item.stepNum;
+          const canGoBack = canGoBackTo(item.stepNum);
+
+          if (isCurrent) {
+            return (
+              <span
+                key={item.stepNum}
+                className="relative pb-3 text-blue-600 font-bold select-none cursor-default flex items-center"
+                aria-current="step"
+              >
+                {item.label}
+                <motion.div
+                  layoutId="stepperActivePill"
+                  className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-600 rounded-full"
+                  transition={{ type: 'spring', stiffness: 380, damping: 30 }}
+                />
+              </span>
+            );
+          }
+
+          if (canGoBack) {
+            return (
+              <button
+                key={item.stepNum}
+                type="button"
+                onClick={() => {
+                  if (item.stepNum === 1) {
+                    handleGoBackToStep1();
+                  } else if (item.stepNum === 2) {
+                    setSubmitError(null);
+                    setStep(2);
+                  }
+                }}
+                className="pb-3 border-b-2 border-transparent text-slate-600 hover:text-blue-600 hover:border-slate-300 transition cursor-pointer select-none"
+                title={`Go back to ${item.label}`}
+              >
+                {item.label}
+              </button>
+            );
+          }
+
+          if (item.stepNum === 3 && step === 2) {
+            return (
+              <button
+                key={item.stepNum}
+                type="button"
+                onClick={handleContinueToSignoff}
+                className="pb-3 border-b-2 border-transparent text-slate-600 hover:text-blue-600 hover:border-slate-300 transition cursor-pointer select-none"
+                title="Continue to Policy & Digital Signature"
+              >
+                {item.label}
+              </button>
+            );
+          }
+
+          return (
+            <span
+              key={item.stepNum}
+              className="pb-3 border-b-2 border-transparent text-slate-400 select-none cursor-default"
+              aria-disabled="true"
+            >
+              {item.label}
+            </span>
+          );
+        })}
       </div>
 
-      {/* STEP 1: PICK DEPARTMENT & FORM */}
-      {step === 1 && (
-        <div className="bg-white rounded-2xl border border-slate-200/80 shadow-2xs p-6 space-y-6">
-          <div>
-            <h2 className="text-sm font-bold text-slate-900">
-              Filter by Organization Department
-            </h2>
-            <p className="text-xs text-slate-500 mt-0.5">
-              Select a category to view the available administrative, academic, or logistics forms.
-            </p>
-          </div>
-
-          <div className="flex flex-wrap gap-2">
-            {DEPARTMENTS.map((dept) => (
-              <button
-                type="button"
-                key={dept.code}
-                onClick={() => setSelectedDept(dept.code)}
-                className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold transition cursor-pointer ${
-                  selectedDept === dept.code
-                    ? 'bg-blue-600 text-white shadow-2xs'
-                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                }`}
-              >
-                {dept.icon}
-                {dept.label}
-              </button>
-            ))}
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
-            {filteredForms.map((form) => (
-              <button
-                type="button"
-                key={form.id}
-                onClick={() => handleSelectForm(form)}
-                className="text-left p-4 rounded-2xl border border-slate-200/80 hover:border-blue-500 hover:shadow-xs transition group cursor-pointer bg-slate-50/40 hover:bg-white"
-              >
-                <div className="flex justify-between items-start">
-                  <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-md bg-white border border-slate-200 text-slate-700">
-                    {form.department} · {form.ref_prefix}
-                  </span>
-                  <div className="w-6 h-6 rounded-full bg-slate-100 group-hover:bg-blue-50 flex items-center justify-center text-slate-400 group-hover:text-blue-600 transition">
-                    <ArrowRight className="w-3.5 h-3.5" />
-                  </div>
-                </div>
-                <h3 className="font-bold text-slate-900 mt-2.5 text-sm group-hover:text-blue-600 transition">
-                  {form.title}
-                </h3>
-                <p className="text-[11px] text-slate-500 mt-1.5">
-                  Pipeline: {form.workflow_pipeline.map((s) => s.label).join(' → ')}
-                </p>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* STEP 2: DYNAMIC PAYLOAD INPUTS (2-Column Layout Matches 3.png) */}
-      {step === 2 && selectedForm && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-          {/* Left Column (2/3 width): Form Fields */}
-          <div className="lg:col-span-2 bg-white rounded-2xl border border-slate-200/80 shadow-2xs p-6 space-y-6">
-            <div className="border-b border-slate-100 pb-3">
+      {/* STEP CONTAINERS WRAPPED IN ANIMATEPRESENCE */}
+      <AnimatePresence mode="wait">
+        {/* STEP 1: PICK DEPARTMENT & FORM */}
+        {step === 1 && (
+          <motion.div
+            key="step-1"
+            initial={{ opacity: 0, x: 16 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -16 }}
+            transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+            className="bg-white rounded-xl border border-slate-200/80 shadow-2xs p-6 space-y-6"
+          >
+            <div>
               <h2 className="text-sm font-bold text-slate-900">
-                Form Inputs &amp; Information
+                Filter by Organization Department
               </h2>
-              <p className="text-xs text-slate-400 mt-0.5">
-                Fill out the required information accurately before proceeding to the digital signature step.
+              <p className="text-xs text-slate-500 mt-0.5">
+                Select a category to view the available administrative, academic, or logistics forms.
               </p>
             </div>
 
-            {renderFormFields()}
-
-            <div className="flex justify-between pt-4 border-t border-slate-100">
-              <button
-                type="button"
-                onClick={() => setStep(1)}
-                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition cursor-pointer"
-              >
-                <ArrowLeft className="w-4 h-4" /> Change Form
-              </button>
-              <button
-                type="button"
-                onClick={() => setStep(3)}
-                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-xs font-semibold text-white shadow-2xs transition cursor-pointer"
-              >
-                Continue to Sign-off <ArrowRight className="w-4 h-4" />
-              </button>
-            </div>
-          </div>
-
-          {/* Right Column (1/3 width): Pricing / Summary Card (Matches 3.png) */}
-          <div className="space-y-4">
-            {/* Calculation / Pricing Card */}
-            <div className="bg-white rounded-2xl border border-slate-200/80 shadow-2xs p-5 space-y-4">
-              <div className="border-b border-slate-100 pb-2">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                  Summary &amp; Costing
-                </span>
-                <h3 className="text-sm font-bold text-slate-800 mt-0.5">
-                  Application Preview
-                </h3>
-              </div>
-
-              <div className="space-y-3 text-xs">
-                {payload.estimated_monthly_amount_zmw ? (
-                  <div className="p-3.5 rounded-xl bg-blue-50/70 border border-blue-200/80 space-y-1">
-                    <span className="text-slate-500 text-[11px] block font-medium">
-                      Est. Monthly Payroll Deduction
-                    </span>
-                    <span className="text-xl font-black text-blue-700 font-mono">
-                      ZMW {Number(payload.estimated_monthly_amount_zmw).toLocaleString()}
-                    </span>
-                    <span className="text-[11px] text-slate-500 block">
-                      Repayment: {String(payload.repayment_period || '').replace(/_/g, ' ')}
-                    </span>
-                  </div>
-                ) : payload.requested_amount_zmw ? (
-                  <div className="p-3.5 rounded-xl bg-blue-50/70 border border-blue-200/80 space-y-1">
-                    <span className="text-slate-500 text-[11px] block font-medium">
-                      Requested Advance Amount
-                    </span>
-                    <span className="text-xl font-black text-blue-700 font-mono">
-                      ZMW {Number(payload.requested_amount_zmw).toLocaleString()}
-                    </span>
-                  </div>
-                ) : null}
-
-                <div className="flex justify-between items-center text-slate-600 py-1 border-b border-slate-50">
-                  <span className="text-slate-500">Department:</span>
-                  <span className="font-semibold text-slate-800">{selectedForm.department}</span>
-                </div>
-
-                <div className="flex justify-between items-center text-slate-600 py-1 border-b border-slate-50">
-                  <span className="text-slate-500">Applicant:</span>
-                  <span className="font-semibold text-slate-800">{currentUser?.full_name}</span>
-                </div>
-
-                <div className="flex justify-between items-center text-slate-600 py-1 border-b border-slate-50">
-                  <span className="text-slate-500">Site:</span>
-                  <span className="font-semibold text-slate-800 truncate max-w-[150px]">
-                    {currentUser?.site_name || 'Educore'}
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* Routing Pipeline Card */}
-            <div className="bg-white rounded-2xl border border-slate-200/80 shadow-2xs p-5 space-y-3">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
-                Approval Pipeline ({selectedForm.ref_prefix})
-              </span>
-              <div className="space-y-2">
-                {selectedForm.workflow_pipeline.map((s) => (
-                  <div
-                    key={s.step_order}
-                    className="flex items-center gap-2 text-xs p-2 rounded-xl bg-slate-50 border border-slate-100"
+            <div className="flex flex-wrap gap-2">
+              {DEPARTMENTS.map((dept) => {
+                const isSelected = selectedDept === dept.code;
+                return (
+                  <button
+                    type="button"
+                    key={dept.code}
+                    onClick={() => setSelectedDept(dept.code)}
+                    className={`relative inline-flex items-center gap-1.5 px-3.5 py-2 rounded-md text-xs font-semibold transition cursor-pointer ${
+                      isSelected
+                        ? 'text-white'
+                        : 'text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200'
+                    }`}
                   >
-                    <span className="w-5 h-5 rounded-full bg-blue-600 text-white font-bold text-[10px] flex items-center justify-center shrink-0">
-                      {s.step_order}
+                    {isSelected && (
+                      <motion.div
+                        layoutId="newRequestDeptPill"
+                        className="absolute inset-0 bg-blue-600 rounded-md shadow-2xs"
+                        transition={{ type: 'spring', stiffness: 350, damping: 28 }}
+                      />
+                    )}
+                    <span className="relative z-10 flex items-center gap-1.5">
+                      {dept.icon}
+                      {dept.label}
                     </span>
-                    <span className="font-medium text-slate-700">{s.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+              {filteredForms.map((form) => (
+                <motion.button
+                  type="button"
+                  key={form.id}
+                  whileHover={{ scale: 1.012, y: -2 }}
+                  whileTap={{ scale: 0.985 }}
+                  transition={{ type: 'spring', stiffness: 400, damping: 25 }}
+                  onClick={() => handleSelectForm(form)}
+                  className="text-left p-4 rounded-lg border border-slate-200/80 hover:border-blue-500 hover:shadow-md transition-shadow group cursor-pointer bg-slate-50/40 hover:bg-white"
+                >
+                  <div className="flex justify-between items-start">
+                    <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-md bg-white border border-slate-200 text-slate-700">
+                      {form.department} · {form.ref_prefix}
+                    </span>
+                    <div className="w-6 h-6 rounded-full bg-slate-100 group-hover:bg-blue-50 flex items-center justify-center text-slate-400 group-hover:text-blue-600 transition">
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </div>
                   </div>
+                  <h3 className="font-bold text-slate-900 mt-2.5 text-sm group-hover:text-blue-600 transition">
+                    {form.title}
+                  </h3>
+                  <p className="text-[11px] text-slate-500 mt-1.5">
+                    Pipeline: {form.workflow_pipeline.map((s) => s.label).join(' → ')}
+                  </p>
+                </motion.button>
+              ))}
+            </div>
+          </motion.div>
+        )}
+
+        {/* STEP 2: DYNAMIC PAYLOAD INPUTS (2-Column Layout Matches 3.png) */}
+        {step === 2 && selectedForm && (
+          <motion.div
+            key="step-2"
+            initial={{ opacity: 0, x: 16 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -16 }}
+            transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+            className="grid grid-cols-1 lg:grid-cols-3 gap-5"
+          >
+            {/* Left Column (2/3 width): Form Fields */}
+            <div className="lg:col-span-2 bg-white rounded-xl border border-slate-200/80 shadow-2xs p-6 space-y-6">
+              <div className="border-b border-slate-100 pb-3">
+                <h2 className="text-sm font-bold text-slate-900">
+                  Form Inputs &amp; Information
+                </h2>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Fill out the required information accurately before proceeding to the digital signature step.
+                </p>
+              </div>
+
+              {hasAttemptedProceed && Object.keys(fieldErrors).length > 0 && (
+                <div
+                  data-testid="form-error-banner"
+                  className="p-4 rounded-xl bg-red-50 border border-red-200 text-xs text-red-700 flex items-start gap-3"
+                >
+                  <AlertCircle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
+                  <div className="space-y-1">
+                    <h4 className="font-bold text-red-800">Please complete all required fields</h4>
+                    <p className="text-red-700">
+                      There {Object.keys(fieldErrors).length === 1 ? 'is 1 required field' : `are ${Object.keys(fieldErrors).length} required fields`} that require attention before you can sign and submit.
+                    </p>
+                    <ul className="list-disc list-inside mt-1 space-y-0.5 text-[11px] text-red-600">
+                      {Object.entries(fieldErrors).slice(0, 5).map(([key, err]) => (
+                        <li key={key}>{err}</li>
+                      ))}
+                      {Object.keys(fieldErrors).length > 5 && (
+                        <li>...and {Object.keys(fieldErrors).length - 5} more</li>
+                      )}
+                    </ul>
+                  </div>
+                </div>
+              )}
+
+              {renderFormFields()}
+
+              {/* Supporting Document & Receipt Upload Zone */}
+              <div className="pt-4 border-t border-slate-100">
+                <FileUploadZone
+                  applicationId={editApplication?.id}
+                  attachments={attachments}
+                  onUpload={async (file) => {
+                    if (editApplication?.id) {
+                      const uploaded = await uploadAttachment(editApplication.id, file);
+                      setAttachments((prev) => [...prev, uploaded]);
+                    } else {
+                      setPendingFiles((prev) => [...prev, file]);
+                      const placeholder: ApplicationAttachment = {
+                        id: `temp-${Date.now()}-${Math.random()}`,
+                        application_id: 'pending',
+                        uploader_id: currentUser?.id || '',
+                        uploader_name: currentUser?.full_name || 'You',
+                        file_name: file.name,
+                        file_size_bytes: file.size,
+                        mime_type: file.type || 'application/octet-stream',
+                        storage_path: '',
+                        created_at: new Date().toISOString(),
+                      };
+                      setAttachments((prev) => [...prev, placeholder]);
+                    }
+                    showToast('info', 'Document Attached', `"${file.name}" attached successfully.`);
+                  }}
+                  onDelete={async (attachmentId) => {
+                    if (attachmentId.startsWith('temp-')) {
+                      setAttachments((prev) => prev.filter((a) => a.id !== attachmentId));
+                      setPendingFiles((prev) => prev.filter((_, idx) => `temp-${idx}` !== attachmentId));
+                    } else {
+                      await deleteAttachment(attachmentId);
+                      setAttachments((prev) => prev.filter((a) => a.id !== attachmentId));
+                    }
+                    showToast('info', 'Document Removed', 'Attachment was removed.');
+                  }}
+                />
+              </div>
+
+              <div className="flex justify-between pt-4 border-t border-slate-100">
+                {editApplication ? (
+                  <div className="text-xs text-slate-500 font-mono flex items-center gap-1">
+                    Editing: <span className="font-bold text-sky-700">{editApplication.reference_number}</span>
+                  </div>
+                ) : (
+                  <motion.button
+                    type="button"
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    onClick={handleGoBackToStep1}
+                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-md border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition cursor-pointer"
+                  >
+                    <ArrowLeft className="w-4 h-4" /> Change Form
+                  </motion.button>
+                )}
+                <motion.button
+                  type="button"
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  onClick={handleContinueToSignoff}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-md bg-blue-600 hover:bg-blue-700 text-xs font-semibold text-white shadow-2xs transition cursor-pointer"
+                >
+                  Continue to Sign-off <ArrowRight className="w-4 h-4" />
+                </motion.button>
+              </div>
+            </div>
+
+            {/* Right Column (1/3 width): Pricing / Summary Card (Matches 3.png) */}
+            <div className="space-y-4">
+              {/* Calculation / Pricing Card */}
+              <div className="bg-white rounded-xl border border-slate-200/80 shadow-2xs p-5 space-y-4">
+                <div className="border-b border-slate-100 pb-2">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                    Summary &amp; Costing
+                  </span>
+                  <h3 className="text-sm font-bold text-slate-800 mt-0.5">
+                    Application Preview
+                  </h3>
+                </div>
+
+                <div className="space-y-3 text-xs">
+                  {payload.estimated_monthly_amount_zmw ? (
+                    <div className="p-3.5 rounded-lg bg-blue-50/70 border border-blue-200/80 space-y-1">
+                      <span className="text-slate-500 text-[11px] block font-medium">
+                        Est. Monthly Payroll Deduction
+                      </span>
+                      <span className="text-xl font-black text-blue-700 font-mono">
+                        ZMW {Number(payload.estimated_monthly_amount_zmw).toLocaleString()}
+                      </span>
+                      <span className="text-[11px] text-slate-500 block">
+                        Repayment: {String(payload.repayment_period || '').replace(/_/g, ' ')}
+                      </span>
+                    </div>
+                  ) : payload.requested_amount_zmw ? (
+                    <div className="p-3.5 rounded-lg bg-blue-50/70 border border-blue-200/80 space-y-1">
+                      <span className="text-slate-500 text-[11px] block font-medium">
+                        Requested Advance Amount
+                      </span>
+                      <span className="text-xl font-black text-blue-700 font-mono">
+                        ZMW {Number(payload.requested_amount_zmw).toLocaleString()}
+                      </span>
+                    </div>
+                  ) : null}
+
+                  <div className="flex justify-between items-center text-slate-600 py-1 border-b border-slate-50">
+                    <span className="text-slate-500">Department:</span>
+                    <span className="font-semibold text-slate-800">{selectedForm.department}</span>
+                  </div>
+
+                  <div className="flex justify-between items-center text-slate-600 py-1 border-b border-slate-50">
+                    <span className="text-slate-500">Applicant:</span>
+                    <span className="font-semibold text-slate-800">{currentUser?.full_name}</span>
+                  </div>
+
+                  <div className="flex justify-between items-center text-slate-600 py-1 border-b border-slate-50">
+                    <span className="text-slate-500">Site:</span>
+                    <span className="font-semibold text-slate-800 truncate max-w-[150px]">
+                      {currentUser?.site_name || 'Educore'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Routing Pipeline Card */}
+              <div className="bg-white rounded-xl border border-slate-200/80 shadow-2xs p-5 space-y-3">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
+                  Approval Pipeline ({selectedForm.ref_prefix})
+                </span>
+                <div className="space-y-2">
+                  {selectedForm.workflow_pipeline.map((s) => (
+                    <div
+                      key={s.step_order}
+                      className="flex items-center gap-2 text-xs p-2 rounded-md bg-slate-50 border border-slate-100"
+                    >
+                      <span className="w-5 h-5 rounded-full bg-blue-600 text-white font-bold text-[10px] flex items-center justify-center shrink-0">
+                        {s.step_order}
+                      </span>
+                      <span className="font-medium text-slate-700">{s.label}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        )}
+
+        {/* STEP 3: POLICY ACCEPTANCE & DIGITAL SIGNATURE */}
+        {step === 3 && selectedForm && (
+          <motion.div
+            key="step-3"
+            initial={{ opacity: 0, x: 16 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: -16 }}
+            transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+            className="bg-white rounded-xl border border-slate-200/80 shadow-2xs p-6 space-y-6"
+          >
+            <div>
+              <h2 className="text-sm font-bold text-slate-900">
+                Policy Agreement &amp; Digital Sign-off
+              </h2>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Review site statutory compliance policies and sign digitally to submit.
+              </p>
+            </div>
+
+            <div className="p-4 rounded-lg bg-slate-50 border border-slate-200/80">
+              <div className="text-xs font-bold text-slate-700 uppercase mb-2">
+                Automated Routing Pipeline ({selectedForm.ref_prefix})
+              </div>
+              <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
+                {selectedForm.workflow_pipeline.map((s, idx) => (
+                  <React.Fragment key={s.step_order}>
+                    <span className="px-2.5 py-1 rounded-md bg-white border border-slate-200 font-medium">
+                      {s.step_order}. {s.label}
+                    </span>
+                    {idx < selectedForm.workflow_pipeline.length - 1 && <span>→</span>}
+                  </React.Fragment>
                 ))}
               </div>
             </div>
-          </div>
-        </div>
-      )}
 
-      {/* STEP 3: POLICY ACCEPTANCE & DIGITAL SIGNATURE */}
-      {step === 3 && selectedForm && (
-        <div className="bg-white rounded-2xl border border-slate-200/80 shadow-2xs p-6 space-y-6">
-          <div>
-            <h2 className="text-sm font-bold text-slate-900">
-              Policy Agreement &amp; Digital Sign-off
-            </h2>
-            <p className="text-xs text-slate-500 mt-0.5">
-              Review site statutory compliance policies and sign digitally to submit.
-            </p>
-          </div>
-
-          <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200/80">
-            <div className="text-xs font-bold text-slate-700 uppercase mb-2">
-              Automated Routing Pipeline ({selectedForm.ref_prefix})
-            </div>
-            <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
-              {selectedForm.workflow_pipeline.map((s, idx) => (
-                <React.Fragment key={s.step_order}>
-                  <span className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 font-medium">
-                    {s.step_order}. {s.label}
-                  </span>
-                  {idx < selectedForm.workflow_pipeline.length - 1 && <span>→</span>}
-                </React.Fragment>
-              ))}
-            </div>
-          </div>
-
-          {selectedForm.requires_policy && activePolicy && (
-            <div className="space-y-3">
-              <div className="flex items-center gap-1.5 text-xs font-bold text-slate-800">
-                <ShieldCheck className="w-4 h-4 text-blue-600" />
-                Policy Terms ({activePolicy.version_tag})
+            {selectedForm.requires_policy && activePolicy && (
+              <div className="space-y-3">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-slate-800">
+                  <ShieldCheck className="w-4 h-4 text-blue-600" />
+                  Policy Terms ({activePolicy.version_tag})
+                </div>
+                <div className="p-4 rounded-lg bg-slate-50 border border-slate-200 max-h-40 overflow-y-auto text-xs text-slate-600 whitespace-pre-line leading-relaxed">
+                  {activePolicy.legal_text}
+                </div>
+                <label className="flex items-center gap-2 text-xs font-medium text-slate-800 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={termsAccepted}
+                    onChange={(e) => setTermsAccepted(e.target.checked)}
+                    className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                  />
+                  I have read, understood, and agree to the policy terms and any applicable payroll deductions.
+                </label>
               </div>
-              <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 max-h-40 overflow-y-auto text-xs text-slate-600 whitespace-pre-line leading-relaxed">
-                {activePolicy.legal_text}
-              </div>
-              <label className="flex items-center gap-2 text-xs font-medium text-slate-800 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={termsAccepted}
-                  onChange={(e) => setTermsAccepted(e.target.checked)}
-                  className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
-                />
-                I have read, understood, and agree to the policy terms and any applicable payroll deductions.
+            )}
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">
+                Applicant Digital Signature (Type Full Legal Name) *
               </label>
+              <input
+                type="text"
+                value={digitalSignature}
+                onChange={(e) => setDigitalSignature(e.target.value)}
+                placeholder={currentUser?.full_name || 'Full Name'}
+                className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm font-serif italic focus:border-blue-500 focus:outline-hidden"
+              />
             </div>
-          )}
 
-          <div>
-            <label className="block text-xs font-semibold text-slate-700 mb-1">
-              Applicant Digital Signature (Type Full Legal Name) *
-            </label>
-            <input
-              type="text"
-              value={digitalSignature}
-              onChange={(e) => setDigitalSignature(e.target.value)}
-              placeholder={currentUser?.full_name || 'Full Name'}
-              className="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm font-serif italic focus:border-blue-500 focus:outline-hidden"
-            />
-          </div>
-
-          <div className="flex justify-between items-center pt-4 border-t border-slate-100">
-            <button
-              type="button"
-              onClick={() => setStep(2)}
-              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition cursor-pointer"
-            >
-              <ArrowLeft className="w-4 h-4" /> Back to Details
-            </button>
-
-            <div className="flex items-center gap-3">
-              <button
+            <div className="flex justify-between items-center pt-4 border-t border-slate-100">
+              <motion.button
                 type="button"
-                disabled={submitting}
-                onClick={() => handleFinalSubmit(false)}
-                className="px-4 py-2 rounded-xl border border-slate-300 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 transition cursor-pointer"
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                onClick={() => {
+                  setSubmitError(null);
+                  setStep(2);
+                }}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-md border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition cursor-pointer"
               >
-                Save as Draft
-              </button>
-              <button
-                type="button"
-                disabled={
-                  submitting ||
-                  !digitalSignature.trim() ||
-                  (selectedForm.requires_policy && !termsAccepted)
-                }
-                onClick={() => handleFinalSubmit(true)}
-                className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-xs font-semibold text-white shadow-2xs disabled:opacity-50 transition cursor-pointer"
-              >
-                <CheckCircle className="w-4 h-4" />
-                {submitting ? 'Submitting...' : 'Sign & Submit Application'}
-              </button>
+                <ArrowLeft className="w-4 h-4" /> Back to Details
+              </motion.button>
+
+              <div className="flex items-center gap-3">
+                <motion.button
+                  type="button"
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  disabled={submitting}
+                  onClick={() => handleFinalSubmit(false)}
+                  className="px-4 py-2 rounded-md border border-slate-300 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 transition cursor-pointer"
+                >
+                  Save as Draft
+                </motion.button>
+                <motion.button
+                  type="button"
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  disabled={
+                    submitting ||
+                    !digitalSignature.trim() ||
+                    (selectedForm.requires_policy && !termsAccepted)
+                  }
+                  onClick={() => handleFinalSubmit(true)}
+                  className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-md bg-emerald-600 hover:bg-emerald-700 text-xs font-semibold text-white shadow-2xs disabled:opacity-50 transition cursor-pointer"
+                >
+                  <CheckCircle className="w-4 h-4" />
+                  {submitting ? 'Submitting...' : 'Sign & Submit Application'}
+                </motion.button>
+              </div>
             </div>
-          </div>
-        </div>
-      )}
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };

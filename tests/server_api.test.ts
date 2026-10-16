@@ -1,8 +1,22 @@
-import http from 'http';
-import { pool, dbService } from '../server/db.ts';
+import {
+  pool,
+  withRlsContext,
+  getFormDefinitions,
+  getApplicationsQueue,
+  createApplication,
+  updateApplication,
+  processApprovalStep,
+  withdrawApplication,
+  addApplicationAttachment,
+  getApplicationAttachments,
+  deleteApplicationAttachment,
+} from '../server/db.ts';
 
-async function testEndpoints() {
-  console.log('=== Educore Provision End-to-End API Integration Suite ===\n');
+async function runTestSuite() {
+  console.log('========================================================================');
+  console.log('Educore Provision v4.2 Modernized API & Workflow Integration Suite');
+  console.log('========================================================================\n');
+
   let failures = 0;
 
   function assert(condition: boolean, message: string) {
@@ -15,106 +29,329 @@ async function testEndpoints() {
   }
 
   try {
-    await dbService.initialize();
+    // ------------------------------------------------------------------------
+    // 1. Verify Master Catalogs (All 9 Sites & 18 Forms)
+    // ------------------------------------------------------------------------
+    console.log('[1] Verifying Core Reference Data...');
+    const sitesRes = await pool.query('SELECT * FROM public.sites WHERE is_active = true ORDER BY name');
+    assert(sitesRes.rows.length === 9, `All 9 official Educore sites present in database (got ${sitesRes.rows.length})`);
 
-    // 1. Sites & Users
-    const insts = await dbService.getSites();
-    assert(insts.length === 5, `Sites returned (5): got ${insts.length}`);
+    const forms = await getFormDefinitions();
+    assert(forms.length === 18, `All 18 standard forms registered in catalog (got ${forms.length})`);
 
-    const users = await dbService.getUsers();
-    assert(users.length === 7, `Users returned (7): got ${users.length}`);
+    const usersRes = await pool.query(
+      `SELECT u.*, s.code AS site_code, s.name AS site_name 
+       FROM public.users u 
+       JOIN public.sites s ON u.site_id = s.id 
+       WHERE u.is_active = true`
+    );
+    const users = usersRes.rows;
+    assert(users.length >= 7, `Benchmark user directory populated (got ${users.length} users)`);
 
-    // 2. Head Teacher (Blair Kuhn) vs Applicant (Jane Mwanza) Scoped Applications
-    const jane = users.find(u => u.email === 'jmwanza@trident-college.com')!;
-    const blair = users.find(u => u.email === 'bkuhn@trident-college.com')!;
-    const hr = users.find(u => u.role === 'HR_MANAGER')!;
+    const chanda = users.find((u) => u.email === 'cmwamba@trident-college.com')!;
+    const lineManager = users.find((u) => u.email === 'kzulu@trident-college.com')!;
+    const blair = users.find((u) => u.email === 'bkuhn@trident-college.com')!;
+    const hr = users.find((u) => u.role === 'HR_MANAGER')!;
+    const finance = users.find((u) => u.role === 'FINANCE_MANAGER')!;
+    const logistics = users.find((u) => u.role === 'LOGISTICS_MANAGER')!;
+    const superAdmin = users.find((u) => u.role === 'SUPER_ADMIN')!;
 
-    const janeApps = await dbService.getApplications(jane);
-    const blairApps = await dbService.getApplications(blair);
-    const hrApps = await dbService.getApplications(hr);
+    assert(Boolean(chanda), 'Chanda Mwamba (Applicant @ Trident College) found');
+    assert(Boolean(lineManager), 'Kelvin Zulu (Line Manager @ Trident College) found');
+    assert(Boolean(blair), 'Blair Kuhn (Head Teacher @ Trident College) found');
+    assert(Boolean(hr), 'Central HR Manager found');
+    assert(Boolean(finance), 'Central Finance Manager found');
+    assert(Boolean(logistics), 'Central Logistics Manager found');
 
-    assert(janeApps.length === 3, `Jane (Applicant) gets strictly her 3 applications under RLS (got ${janeApps.length})`);
-    assert(blairApps.length === 3, `Blair (Head Teacher) gets all 3 Trident College applications under RLS (got ${blairApps.length})`);
-    assert(hrApps.length === 5, `HR Manager gets all 5 benchmark applications across organization (got ${hrApps.length})`);
+    // ------------------------------------------------------------------------
+    // 2. Draft Creation, Partial Payload & Editing Cycle
+    // ------------------------------------------------------------------------
+    console.log('\n[2] Testing Draft Creation and Editing (PUT /api/applications/:id)...');
 
-    // Verify applicant IDs
-    for (const app of janeApps) {
-      assert(app.applicantId === jane.id, `Jane's app ${app.referenceNumber} matches Jane's ID`);
-    }
-
-    // Notice: For Blair Kuhn, his personal applications are:
-    const blairPersonalApps = blairApps.filter(a => a.applicantId === blair.id);
-    assert(blairPersonalApps.length === 0, `Blair Kuhn has 0 personal applications (Jane submitted them), so his personal view correctly has 0`);
-
-    // 3. Testing Blair Kuhn (Head Teacher) submitting a Personal Laptop Application
-    console.log('\n-> Testing Head Teacher submitting personal request...');
-    const submitResult = await dbService.submitPart1(blair, {
-      tier: 'LEVEL_2',
-      repaymentPeriod: 'TWENTY_FOUR_MONTHS',
-      estimatedMonthlyAmount: 1875.0,
-      termsAccepted: true,
-      ipAddress: '196.220.124.88',
-      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Trident Leadership Test',
+    const draftApp = await createApplication({
+      entraOid: chanda.entra_oid,
+      formCode: 'TRAVEL_REQUEST',
+      submitImmediately: false,
+      termsAccepted: false,
+      digitalSignature: 'Chanda Mwamba',
+      payload: {
+        cost_code: 'TRV-2026-TCL',
+        contact_number: '+260977112233',
+        site: 'Trident College',
+        reason_for_travel: 'Official Sports & Academics Fixture',
+        flight_booking_type: 'BUSINESS',
+        department_school: 'Trident College Humanities',
+        traveler_name: 'Chanda Mwamba',
+        traveler_cell: '+260977112233',
+        traveler_email: chanda.email,
+        nature_of_travel: 'SPORTS',
+        booking_type: 'BUSINESS',
+        passengers: [
+          {
+            surname: 'Mwamba',
+            first_name: 'Chanda',
+            date_of_birth: '1988-04-12',
+            id_passport: 'ZP-110293',
+            special_needs: 'None',
+          },
+        ],
+        flights: [
+          {
+            date: '2026-11-10',
+            departure_airport: 'Solwezi (SLI)',
+            arrival_airport: 'Lusaka (LUN)',
+            carrier_pref: 'Proflight',
+          },
+        ],
+      },
     });
 
-    assert(submitResult.success === true, `Head Teacher personal submission succeeded`);
-    assert(Boolean(submitResult.application), `Personal application created with reference`);
-    const createdPersonalApp = submitResult.application!;
+    assert(draftApp.status === 'DRAFT', `Application created in DRAFT status`);
+    assert(draftApp.current_step_order === null, `Draft has current_step_order = null`);
+    assert(draftApp.current_approver_role === null, `Draft has current_approver_role = null`);
+    assert(draftApp.reference_number.startsWith('EDC-TRV-'), `Reference number generated with EDC-TRV prefix (${draftApp.reference_number})`);
 
-    // 4. Verify Blair now has 1 personal application, and Trident College has 4 campus applications
-    const blairAppsAfter = await dbService.getApplications(blair);
-    const blairPersonalAfter = blairAppsAfter.filter(a => a.applicantId === blair.id);
-    assert(blairPersonalAfter.length === 1, `Blair Kuhn personal applications count is now 1 (got ${blairPersonalAfter.length})`);
-    assert(blairAppsAfter.length === 4, `Blair Kuhn campus applications directory has 4 total applications (got ${blairAppsAfter.length})`);
+    // Applicant updates draft with an extra passenger and hotel booking
+    const updatedDraft = await updateApplication({
+      entraOid: chanda.entra_oid,
+      applicationId: draftApp.id,
+      submitImmediately: false,
+      payload: {
+        ...draftApp.payload,
+        hotel_booking: {
+          hotel_name: 'Taj Pamodzi Lusaka',
+          check_in_date: '2026-11-10',
+          check_out_date: '2026-11-12',
+          meal_basis: 'BED_AND_BREAKFAST',
+        },
+      },
+    });
 
-    // 5. Verify Jane Mwanza is still completely isolated (only sees her own 3 applications)
-    const janeAppsAfter = await dbService.getApplications(jane);
-    assert(janeAppsAfter.length === 3, `Jane Mwanza is isolated from Head Teacher's personal request under RLS (got ${janeAppsAfter.length})`);
-    for (const app of janeAppsAfter) {
-      assert(app.applicantId === jane.id, `Jane's application ${app.referenceNumber} belongs strictly to Jane`);
+    assert(updatedDraft.status === 'DRAFT', 'Updated draft maintains DRAFT status when submitImmediately = false');
+    assert(Boolean(updatedDraft.payload.hotel_booking), 'Draft payload updated with hotel booking');
+
+    // ------------------------------------------------------------------------
+    // 3. Supporting Document Attachments & Secure Retrieval
+    // ------------------------------------------------------------------------
+    console.log('\n[3] Testing Supporting Document Attachments & RLS...');
+
+    const attachment = await addApplicationAttachment(chanda.entra_oid, draftApp.id, {
+      fileName: 'Travel_Conference_Brochure.pdf',
+      fileSizeBytes: 204800,
+      mimeType: 'application/pdf',
+      storagePath: 'uploads/test_brochure.pdf',
+    });
+
+    assert(Boolean(attachment.id), `Attachment created with UUID (${attachment.id})`);
+    assert(attachment.file_name === 'Travel_Conference_Brochure.pdf', 'Attachment file name preserved');
+    assert(attachment.uploader_name === 'Chanda Mwamba', `Uploader name linked (${attachment.uploader_name})`);
+
+    const attachmentsList = await getApplicationAttachments(chanda.entra_oid, draftApp.id);
+    assert(attachmentsList.length === 1, `Applicant retrieves attached documents (expected 1, got ${attachmentsList.length})`);
+
+    // Confidentiality check: non-applicants CANNOT view attachments on private drafts (RLS isolation)
+    const blairDraftAttachments = await getApplicationAttachments(blair.entra_oid, draftApp.id);
+    assert(blairDraftAttachments.length === 0, `Non-applicant cannot view private draft attachments (got 0)`);
+
+    // ------------------------------------------------------------------------
+    // 4. Submission & Step 1 Sign-off
+    // ------------------------------------------------------------------------
+    console.log('\n[4] Submitting Draft into Live Multi-Stage Approval Pipeline...');
+
+    const submittedApp = await updateApplication({
+      entraOid: chanda.entra_oid,
+      applicationId: draftApp.id,
+      submitImmediately: true,
+      digitalSignature: 'Chanda Mwamba',
+      payload: updatedDraft.payload,
+    });
+
+    assert(submittedApp.status === 'IN_REVIEW', `Submitted application transitioned to IN_REVIEW`);
+    assert(submittedApp.current_step_order === 1, `current_step_order initialized to Step 1`);
+    assert(submittedApp.current_approver_role === 'LINE_MANAGER', `current_approver_role assigned to LINE_MANAGER`);
+
+    // Line Manager at same site can now view attachments once in-review
+    const lmAttachments = await getApplicationAttachments(lineManager.entra_oid, submittedApp.id);
+    assert(lmAttachments.length === 1, `Assigned Line Manager can view attachments for submitted application`);
+
+    // ------------------------------------------------------------------------
+    // 5. Revision Requested by Approver & Applicant Resubmission Loop
+    // ------------------------------------------------------------------------
+    console.log('\n[5] Testing Reviewer "Request Revision" and Applicant Resubmission...');
+
+    // Step 1 Line Manager requests revision
+    const revisionApp = await processApprovalStep({
+      entraOid: lineManager.entra_oid,
+      applicationId: submittedApp.id,
+      decision: 'REVISION_REQUESTED',
+      comments: 'Please attach secondary quote or clarify departure time preference.',
+    });
+
+    assert(revisionApp.status === 'REVISION_REQUIRED', `Application transitioned to REVISION_REQUIRED`);
+
+    // Applicant addresses the comments, adds a second quote attachment, and resubmits
+    await addApplicationAttachment(chanda.entra_oid, submittedApp.id, {
+      fileName: 'Flight_Alternative_Quote.pdf',
+      fileSizeBytes: 104800,
+      mimeType: 'application/pdf',
+      storagePath: 'uploads/test_flight_quote.pdf',
+    });
+
+    const resubmittedApp = await updateApplication({
+      entraOid: chanda.entra_oid,
+      applicationId: submittedApp.id,
+      submitImmediately: true,
+      payload: {
+        ...updatedDraft.payload,
+        preferred_departure_time: '14:00',
+      },
+    });
+
+    assert(resubmittedApp.status === 'IN_REVIEW', `Resubmitted application returned to IN_REVIEW`);
+    assert(resubmittedApp.current_step_order === 1, `Pipeline reset to Step 1 for re-endorsement`);
+    assert(resubmittedApp.current_approver_role === 'LINE_MANAGER', `Approver role returned to LINE_MANAGER`);
+
+    // ------------------------------------------------------------------------
+    // 6. Complete End-to-End Approval Pipeline
+    // ------------------------------------------------------------------------
+    console.log('\n[6] Advancing Full Approval Pipeline (Step 1 -> Step 2 -> APPROVED)...');
+
+    // Step 1: Line Manager Approves
+    const step1Approved = await processApprovalStep({
+      entraOid: lineManager.entra_oid,
+      applicationId: submittedApp.id,
+      decision: 'APPROVED',
+      comments: 'Endorsed. Flights approved for department sports fixture.',
+    });
+
+    assert(step1Approved.status === 'IN_REVIEW', `Status remains IN_REVIEW after Step 1`);
+    assert(step1Approved.current_step_order === 2, `Advanced to Step 2`);
+    assert(step1Approved.current_approver_role === 'LOGISTICS_MANAGER', `Assigned to Central LOGISTICS_MANAGER`);
+
+    // Step 2: Central Logistics Manager Approves & Books
+    const finalizedApp = await processApprovalStep({
+      entraOid: logistics.entra_oid,
+      applicationId: submittedApp.id,
+      decision: 'APPROVED',
+      comments: 'Tickets issued via Proflight Zambia (PNR #EDC749).',
+    });
+
+    assert(finalizedApp.status === 'APPROVED', `Final stage approved: status is now APPROVED`);
+    assert(finalizedApp.current_step_order === null, `Final approval clears current_step_order`);
+    assert(finalizedApp.current_approver_role === null, `Final approval clears current_approver_role`);
+
+    // ------------------------------------------------------------------------
+    // 7. Test In-Flight Applicant Withdrawal & Stored Procedure
+    // ------------------------------------------------------------------------
+    console.log('\n[7] Testing In-Flight Application Withdrawal...');
+
+    const blairPersonalApp = await createApplication({
+      entraOid: blair.entra_oid,
+      formCode: 'PROF_DEV',
+      submitImmediately: true,
+      termsAccepted: true,
+      digitalSignature: 'Blair Kuhn',
+      payload: {
+        position: 'Head Teacher',
+        description: 'Executive School Leadership Symposium 2026',
+        training_provider_location: 'Cambridge University Press & Assessment, UK',
+        total_costs_zmw: 24500,
+        start_date: '2026-11-15',
+        end_date: '2026-11-18',
+        relevance_to_role: 'Continuous professional leadership development.',
+      },
+    });
+
+    assert(blairPersonalApp.status === 'IN_REVIEW', 'Blair personal request created and IN_REVIEW');
+
+    const withdrawnApp = await withdrawApplication(
+      blair.entra_oid,
+      blairPersonalApp.id,
+      'Scheduling conflict with Board of Governors meeting.'
+    );
+
+    assert(withdrawnApp.status === 'CLOSED', `Application withdrawn and marked CLOSED`);
+
+    // Also test withdrawing an unsubmitted DRAFT application (verifying chk_envelope_submission allows CLOSED with null signature)
+    const testDraftWithdraw = await createApplication({
+      entraOid: chanda.entra_oid,
+      formCode: 'TRAVEL_REQUEST',
+      submitImmediately: false,
+      payload: updatedDraft.payload,
+    });
+    assert(testDraftWithdraw.status === 'DRAFT', 'Draft created without submission');
+    const withdrawnDraft = await withdrawApplication(
+      chanda.entra_oid,
+      testDraftWithdraw.id,
+      'Draft no longer required.'
+    );
+    assert(withdrawnDraft.status === 'CLOSED', 'Draft successfully withdrawn and marked CLOSED');
+
+    // ------------------------------------------------------------------------
+    // 8. Least-Privilege & Anti-Forgery Governance Enforcement
+    // ------------------------------------------------------------------------
+    console.log('\n[8] Testing Anti-Forgery & Least-Privilege Governance Guards...');
+
+    // A: Applicant cannot approve their own request
+    const testApp = await createApplication({
+      entraOid: chanda.entra_oid,
+      formCode: 'TRAVEL_REQUEST',
+      submitImmediately: true,
+      payload: updatedDraft.payload,
+    });
+
+    try {
+      await processApprovalStep({
+        entraOid: chanda.entra_oid,
+        applicationId: testApp.id,
+        decision: 'APPROVED',
+      });
+      assert(false, 'Applicant self-approval should be rejected');
+    } catch (err: any) {
+      const blocked =
+        err.message.includes('Conflict of interest') ||
+        err.message.includes('access denied under least-privilege policy');
+      assert(blocked, `Self-approval blocked with: "${err.message}"`);
     }
 
-    // 6. Withdraw Blair's test personal application to keep benchmark clean
-    const withdrawResult = await dbService.withdrawApplication(blair, createdPersonalApp.id);
-    assert(withdrawResult.success === true, `Head Teacher successfully withdrew personal test application`);
+    // B: Oversight role (Super Admin) cannot forge operational sign-offs
+    try {
+      await processApprovalStep({
+        entraOid: superAdmin.entra_oid,
+        applicationId: testApp.id,
+        decision: 'APPROVED',
+      });
+      assert(false, 'Super Admin sign-off forgery should be rejected');
+    } catch (err: any) {
+      const blocked =
+        err.message.includes('Oversight roles cannot act on approval steps') ||
+        err.message.includes('access denied under least-privilege policy');
+      assert(
+        blocked,
+        `Oversight role forgery blocked with: "${err.message}"`
+      );
+    }
 
-    // 7. Verify Tab Permissions logic
-    const isTabAllowedForRole = (tab: string, role: string) => {
-      if (role === 'SUPER_ADMIN') return true;
-      if (tab === 'my-requests') return true;
-      if (tab === 'staff-applicants') return role !== 'APPLICANT';
-      if (role === 'APPLICANT') return tab === 'my-requests';
-      if (role === 'HEAD_TEACHER') return tab === 'school-triage' || tab === 'staff-applicants' || tab === 'my-requests';
-      if (role === 'HR_MANAGER') return tab === 'hr-queue' || tab === 'master-sheet' || tab === 'staff-applicants' || tab === 'my-requests';
-      if (role === 'IT_MANAGER') return tab === 'it-queue' || tab === 'master-sheet' || tab === 'staff-applicants' || tab === 'my-requests';
-      return false;
-    };
+    // Clean up test application
+    await withdrawApplication(chanda.entra_oid, testApp.id, 'Test cleanup');
 
-    assert(isTabAllowedForRole('my-requests', 'APPLICANT') === true, `Applicant allowed my-requests`);
-    assert(isTabAllowedForRole('staff-applicants', 'APPLICANT') === false, `Applicant denied staff-applicants`);
-    assert(isTabAllowedForRole('staff-applicants', 'HEAD_TEACHER') === true, `Head Teacher allowed staff-applicants`);
-    assert(isTabAllowedForRole('my-requests', 'HEAD_TEACHER') === true, `Head Teacher allowed my-requests`);
-    assert(isTabAllowedForRole('staff-applicants', 'HR_MANAGER') === true, `HR Manager allowed staff-applicants`);
-    assert(isTabAllowedForRole('my-requests', 'HR_MANAGER') === true, `HR Manager allowed my-requests`);
-    assert(isTabAllowedForRole('staff-applicants', 'IT_MANAGER') === true, `IT Manager allowed staff-applicants`);
-    assert(isTabAllowedForRole('my-requests', 'IT_MANAGER') === true, `IT Manager allowed my-requests`);
+    // Clean up test attachments
+    await deleteApplicationAttachment(chanda.entra_oid, attachment.id);
 
-    // Reset database back to benchmark state
-    await dbService.resetDatabase();
-
-    console.log(`\n========================================`);
+    console.log(`\n========================================================================`);
     if (failures === 0) {
-      console.log('🎉 ALL API INTEGRATION TESTS PASSED PERFECTLY!');
+      console.log('🎉 ALL INTEGRATION SUITE TESTS PASSED 100%!');
+      console.log('========================================================================\n');
     } else {
-      console.error(`💥 TEST SUITE COMPLETED WITH ${failures} FAILURES`);
+      console.error(`💥 SUITE FINISHED WITH ${failures} FAILURE(S)`);
       process.exitCode = 1;
     }
-  } catch (err) {
-    console.error('API Test Error:', err);
+  } catch (err: any) {
+    console.error('Unhandled suite error:', err);
     process.exitCode = 1;
   } finally {
     await pool.end();
   }
 }
 
-testEndpoints();
+runTestSuite();

@@ -94,8 +94,12 @@ export const Header: React.FC<HeaderProps> = ({ currentTab, setCurrentTab }) => 
         <div className="flex items-center justify-between gap-8 h-16">
           {/* Zone 1: Brand Wordmark */}
           <div className="flex items-center gap-3 shrink-0">
-            <div className="w-9 h-9 rounded-lg bg-emerald-700 flex items-center justify-center text-white font-bold text-base shadow-xs">
-              E
+            <div className="w-9 h-9 rounded-lg bg-slate-900 flex items-center justify-center p-1 shadow-xs border border-slate-800">
+              <img
+                src="/logo.png"
+                alt="Educore Provision Logo"
+                className="w-full h-full object-contain"
+              />
             </div>
             <div className="flex flex-col">
               <span className="text-base font-bold tracking-tight text-slate-900 whitespace-nowrap">

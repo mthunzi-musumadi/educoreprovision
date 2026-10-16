@@ -10,6 +10,8 @@ import {
   FormCode,
   FormPayloadMap,
   LifecycleStatus,
+  ApplicationAttachment,
+  UpdateFormInput,
 } from '../types';
 
 interface SubmitFormInput<K extends FormCode> {
@@ -65,10 +67,14 @@ interface AppContextType {
     awaitingMyRoleOnly?: boolean;
   }) => Promise<void>;
 
-  // Unified Workflow Actions (Works for all 14 forms)
+  // Unified Workflow Actions (Works for all 18 forms)
   submitWorkflowForm: <K extends FormCode>(input: SubmitFormInput<K>) => Promise<WorkflowApplication<K>>;
+  updateWorkflowForm: <K extends FormCode>(input: UpdateFormInput<K>) => Promise<WorkflowApplication<K>>;
   submitStepDecision: (input: StepDecisionInput) => Promise<void>;
   withdrawApplication: (applicationId: string) => Promise<void>;
+  uploadAttachment: (applicationId: string, file: File) => Promise<ApplicationAttachment>;
+  deleteAttachment: (attachmentId: string) => Promise<void>;
+  getApplicationAttachments: (applicationId: string) => Promise<ApplicationAttachment[]>;
 
   // Legacy ICT Actions (Keeps EndorsementModal, HRClearanceModal, ITSignoffModal working)
   endorseByGM: (
@@ -297,6 +303,57 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     [apiFetch, refreshApplications]
   );
 
+  const updateWorkflowForm = useCallback(
+    async <K extends FormCode>(input: UpdateFormInput<K>): Promise<WorkflowApplication<K>> => {
+      const updated = await apiFetch<WorkflowApplication<K>>(`/api/applications/${input.applicationId}`, {
+        method: 'PUT',
+        body: JSON.stringify(input),
+      });
+      await refreshApplications();
+      return updated;
+    },
+    [apiFetch, refreshApplications]
+  );
+
+  const uploadAttachment = useCallback(
+    async (applicationId: string, file: File): Promise<ApplicationAttachment> => {
+      if (!entraOid) throw new Error('No active user session (missing Entra OID).');
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const res = await fetch(`/api/applications/${applicationId}/attachments`, {
+        method: 'POST',
+        headers: {
+          'x-entra-oid': entraOid,
+        },
+        body: formData,
+      });
+
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(body.error || 'Failed to upload attachment');
+      }
+      return body as ApplicationAttachment;
+    },
+    [entraOid]
+  );
+
+  const deleteAttachment = useCallback(
+    async (attachmentId: string): Promise<void> => {
+      await apiFetch(`/api/attachments/${attachmentId}`, {
+        method: 'DELETE',
+      });
+    },
+    [apiFetch]
+  );
+
+  const getApplicationAttachments = useCallback(
+    async (applicationId: string): Promise<ApplicationAttachment[]> => {
+      return apiFetch<ApplicationAttachment[]>(`/api/applications/${applicationId}/attachments`);
+    },
+    [apiFetch]
+  );
+
   // ==========================================================================
   // LEGACY ICT WRAPPERS (Delegates directly to the unified decision engine)
   // ==========================================================================
@@ -373,8 +430,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         legacyIctApplications,
         refreshApplications,
         submitWorkflowForm,
+        updateWorkflowForm,
         submitStepDecision,
         withdrawApplication,
+        uploadAttachment,
+        deleteAttachment,
+        getApplicationAttachments,
         endorseByGM,
         clearByHR,
         signOffByIT,

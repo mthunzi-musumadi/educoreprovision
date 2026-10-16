@@ -18,6 +18,7 @@ import {
   Building2,
   ShieldCheck,
   Lock,
+  Printer,
 } from 'lucide-react';
 import { useAppContext } from '../../context/AppContext';
 import {
@@ -33,7 +34,10 @@ import { ApplicationDetailDrawer } from '../ApplicationDetailDrawer';
 import { StepperProgress } from '../common/StepperProgress';
 import { StatusBadge } from '../common/StatusBadge';
 import { NewRequestStepper } from '../ApplicantView/NewRequestStepper';
+import { DocumentFacsimileModal } from '../DocumentFacsimile/DocumentFacsimileModal';
+import { exportApplicationsToCsv } from '../../utils/csvExport';
 import { useToast } from '../common/Toast';
+import { motion, AnimatePresence } from 'motion/react';
 
 interface MasterSheetViewProps {
   mode?: 'REVIEW_QUEUE' | 'MASTER_SHEET';
@@ -57,7 +61,10 @@ export const MasterSheetView: React.FC<MasterSheetViewProps> = ({
   const [statusFilter, setStatusFilter] = useState<LifecycleStatus | 'ALL'>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedApp, setSelectedApp] = useState<WorkflowApplication | null>(null);
+  const [printModalApp, setPrintModalApp] = useState<WorkflowApplication | null>(null);
+  const [editingApp, setEditingApp] = useState<WorkflowApplication | null>(null);
   const [showNewModal, setShowNewModal] = useState(false);
+  const searchInputRef = React.useRef<HTMLInputElement>(null);
 
   // Sorting state
   const [sortField, setSortField] = useState<SortField>('date');
@@ -71,6 +78,23 @@ export const MasterSheetView: React.FC<MasterSheetViewProps> = ({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   const isCentralUser = currentUser?.site_code === 'CENTRAL';
+
+  // Global "/" shortcut to focus search
+  React.useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (
+        e.key === '/' &&
+        document.activeElement?.tagName !== 'INPUT' &&
+        document.activeElement?.tagName !== 'TEXTAREA' &&
+        document.activeElement?.tagName !== 'SELECT'
+      ) {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   // Sync tab default when switching between Review Queue and Master Sheet in Sidebar
   React.useEffect(() => {
@@ -89,7 +113,7 @@ export const MasterSheetView: React.FC<MasterSheetViewProps> = ({
     );
   }, [applications, currentUser]);
 
-  // 2. Role-Scoped Forms & Departments (Hick's Law + Least Privilege):
+  // 2. Role-Scoped Forms & Departments (Access-Control Scoping):
   //    Only show forms in the filter dropdown where this user's role is actually in the pipeline
   //    (or where they have an involved application, or all forms for Central SUPER_ADMIN).
   const permittedForms = useMemo(() => {
@@ -253,77 +277,54 @@ export const MasterSheetView: React.FC<MasterSheetViewProps> = ({
       ? involvedApplications.filter((a) => selectedIds.has(a.id))
       : filteredApps;
 
-    if (targetApps.length === 0) return;
+    if (targetApps.length === 0) {
+      showToast('info', 'No Records to Export', 'There are no application records to export.');
+      return;
+    }
 
-    const headers = [
-      'Reference',
-      'Department',
-      'Form Title',
-      'Applicant Name',
-      'Employee #',
-      'Site',
-      'Status',
-      'Current Step Role',
-      'Submitted Date',
-      'Payload Summary (JSON)',
-    ];
+    const dateStr = new Date().toISOString().slice(0, 10);
+    const filename = `educore_site_workflow_export_${dateStr}.csv`;
+    const result = exportApplicationsToCsv(targetApps, filename);
 
-    const rows = targetApps.map((a) => [
-      a.reference_number,
-      a.department,
-      `"${a.form_title.replace(/"/g, '""')}"`,
-      `"${a.applicant_name.replace(/"/g, '""')}"`,
-      a.applicant_employee_number,
-      `"${a.site_name.replace(/"/g, '""')}"`,
-      a.status,
-      a.current_approver_role || 'NONE',
-      new Date(a.created_at).toISOString().split('T')[0],
-      `"${JSON.stringify(a.payload).replace(/"/g, '""')}"`,
-    ]);
-
-    const csvContent =
-      'data:text/csv;charset=utf-8,' +
-      [headers.join(','), ...rows.map((e) => e.join(','))].join('\n');
-
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    link.setAttribute(
-      'download',
-      `educore_site_workflow_export_${new Date().toISOString().slice(0, 10)}.csv`
-    );
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-
-    showToast(
-      'success',
-      'CSV Export Complete',
-      `Exported ${targetApps.length} involved application records.`
-    );
+    if (result.success) {
+      showToast(
+        'success',
+        'CSV Export Complete',
+        `Successfully exported ${result.count} involved application record(s) to CSV.`
+      );
+    } else {
+      showToast('error', 'Export Failed', result.error || 'Failed to generate CSV export.');
+    }
   };
 
   if (showNewModal) {
     return (
       <div className="p-4 sm:p-6 max-w-6xl mx-auto">
         <NewRequestStepper
-          onSuccess={() => setShowNewModal(false)}
-          onCancel={() => setShowNewModal(false)}
+          editApplication={editingApp}
+          onSuccess={() => {
+            setShowNewModal(false);
+            setEditingApp(null);
+          }}
+          onCancel={() => {
+            setShowNewModal(false);
+            setEditingApp(null);
+          }}
         />
       </div>
     );
   }
 
   return (
-    <div className="p-4 sm:p-6 max-w-7xl mx-auto space-y-5">
-      {/* Executive Header & Least-Privilege Scope Banner */}
-      <div className="corporate-card rounded-xl p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+    <div className="p-4 sm:p-6 max-w-7xl mx-auto space-y-4">
+      {/* Workspace Header */}
+      <div className="corporate-card rounded-lg p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         <div className="space-y-1">
           <div className="flex items-center gap-2.5 flex-wrap">
             <h1 className="text-lg sm:text-xl font-bold text-slate-900 tracking-tight">
               {awaitingMyRoleOnly
-                ? 'Action Required Sign-off Queue'
-                : 'Involved Workflow Ledger'}
+                ? 'Pending Approvals'
+                : 'Workflow Records & Ledger'}
             </h1>
             {currentUser && (
               <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md bg-slate-100 text-slate-800 text-[11px] font-semibold border border-slate-200">
@@ -334,279 +335,243 @@ export const MasterSheetView: React.FC<MasterSheetViewProps> = ({
               </span>
             )}
           </div>
-          <p className="text-xs text-slate-500 flex items-center gap-1.5">
-            <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-            <span>
-              Least-Privilege Access: Displaying strictly the{' '}
-              <strong className="text-slate-800 tabular-nums">
-                {involvedApplications.length}
-              </strong>{' '}
-              application(s) involving{' '}
-              <strong className="text-slate-800">
-                {currentUser ? ROLE_LABELS[currentUser.role] : 'your role'}
-              </strong>{' '}
-              {isCentralUser
-                ? 'across authorized Central pipeline steps.'
-                : `bound to ${currentUser?.site_name}.`}
-            </span>
+          <p className="text-xs text-slate-500">
+            Displaying{' '}
+            <strong className="text-slate-800 tabular-nums">
+              {involvedApplications.length}
+            </strong>{' '}
+            record(s) involving{' '}
+            <strong className="text-slate-800">
+              {currentUser ? ROLE_LABELS[currentUser.role] : 'your role'}
+            </strong>{' '}
+            {isCentralUser
+              ? 'across Central administrative workflows.'
+              : `at ${currentUser?.site_name}.`}
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <div className="inline-flex p-1 rounded-lg bg-slate-100 border border-slate-200/80">
-            <button
+          <div className="inline-flex p-0.5 rounded-md bg-slate-100 border border-slate-200 relative">
+            <motion.button
               type="button"
+              whileTap={{ scale: 0.98 }}
               onClick={() => {
                 setAwaitingMyRoleOnly(true);
                 setCurrentPage(1);
               }}
-              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition cursor-pointer ${
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-sm text-xs font-semibold cursor-pointer relative z-0 transition-colors ${
                 awaitingMyRoleOnly
-                  ? 'bg-white text-slate-900 shadow-2xs'
+                  ? 'text-slate-900'
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
+              {awaitingMyRoleOnly && (
+                <motion.div
+                  layoutId="masterSheetTabPill"
+                  className="absolute inset-0 bg-white rounded-sm -z-10 shadow-xs"
+                  transition={{ type: 'spring', stiffness: 400, damping: 30 }}
+                />
+              )}
               <Inbox className="w-3.5 h-3.5 text-amber-600" />
-              <span>My Sign-offs ({metrics.myInboxCount})</span>
-            </button>
+              <span>Pending Review ({metrics.myInboxCount})</span>
+            </motion.button>
 
-            <button
+            <motion.button
               type="button"
+              whileTap={{ scale: 0.98 }}
               onClick={() => {
                 setAwaitingMyRoleOnly(false);
                 setCurrentPage(1);
               }}
-              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition cursor-pointer ${
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-sm text-xs font-semibold cursor-pointer relative z-0 transition-colors ${
                 !awaitingMyRoleOnly
-                  ? 'bg-white text-slate-900 shadow-2xs'
+                  ? 'text-slate-900'
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              <span>All Involved ({metrics.totalInvolved})</span>
-            </button>
+              {!awaitingMyRoleOnly && (
+                <motion.div
+                  layoutId="masterSheetTabPill"
+                  className="absolute inset-0 bg-white rounded-sm -z-10 shadow-xs"
+                  transition={{ type: 'spring', stiffness: 400, damping: 30 }}
+                />
+              )}
+              <span>All Records ({metrics.totalInvolved})</span>
+            </motion.button>
           </div>
 
-          <button
+          <motion.button
             type="button"
+            whileHover={{ scale: 1.03 }}
+            whileTap={{ scale: 0.97 }}
             onClick={() => exportSelectedOrAllToCsv(false)}
             disabled={filteredApps.length === 0}
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-slate-200 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-40 transition cursor-pointer shadow-2xs"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-slate-200 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-40 transition cursor-pointer shadow-2xs"
           >
             <Download className="w-3.5 h-3.5" />
             <span>Export CSV</span>
-          </button>
+          </motion.button>
 
-          <button
+          <motion.button
             type="button"
+            whileHover={{ scale: 1.03 }}
+            whileTap={{ scale: 0.97 }}
             onClick={() => setShowNewModal(true)}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold shadow-2xs transition cursor-pointer"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold shadow-2xs transition cursor-pointer"
           >
-            <Plus className="w-3.5 h-3.5 text-sky-400" />
+            <Plus className="w-3.5 h-3.5 text-blue-400" />
             <span>New Application</span>
-          </button>
+          </motion.button>
         </div>
       </div>
 
-      {/* Interactive KPI Filter Cards (Fitts's Law & Jakob's Law) */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
-        <button
+      {/* Interactive KPI Filter Cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <motion.button
           type="button"
+          whileHover={{ y: -2 }}
+          whileTap={{ scale: 0.98 }}
           onClick={() => {
             setAwaitingMyRoleOnly(true);
             setStatusFilter('ALL');
             setCurrentPage(1);
           }}
-          className={`text-left p-4 rounded-xl border transition cursor-pointer flex items-center justify-between ${
+          className={`text-left p-4 rounded-lg border transition cursor-pointer flex items-center justify-between ${
             awaitingMyRoleOnly
-              ? 'bg-slate-900 text-white border-slate-900 shadow-xs'
-              : 'bg-white text-slate-900 border-slate-200/90 hover:border-slate-300 shadow-2xs'
+              ? 'bg-amber-50/40 border-amber-600 ring-1 ring-amber-600/30 text-slate-900 shadow-sm'
+              : 'bg-white text-slate-900 border-slate-200 hover:border-slate-300 shadow-2xs'
           }`}
         >
           <div>
-            <span
-              className={`text-xs font-medium ${
-                awaitingMyRoleOnly ? 'text-slate-300' : 'text-slate-500'
-              }`}
-            >
+            <span className="text-xs font-medium text-slate-500">
               Awaiting My Sign-off
             </span>
-            <p
-              className={`text-2xl font-bold tabular-nums mt-1 ${
-                awaitingMyRoleOnly ? 'text-amber-400' : 'text-slate-900'
-              }`}
-            >
+            <p className="text-2xl font-bold tabular-nums mt-1 text-amber-700">
               {metrics.myInboxCount}
             </p>
           </div>
-          <div
-            className={`w-10 h-10 rounded-lg flex items-center justify-center ${
-              awaitingMyRoleOnly
-                ? 'bg-slate-800 text-amber-400'
-                : 'bg-amber-50 text-amber-600'
-            }`}
-          >
-            <Inbox className="w-5 h-5" />
+          <div className="w-9 h-9 rounded-md bg-amber-50 text-amber-700 flex items-center justify-center shrink-0 border border-amber-200/80">
+            <Inbox className="w-4 h-4" />
           </div>
-        </button>
+        </motion.button>
 
-        <button
+        <motion.button
           type="button"
+          whileHover={{ y: -2 }}
+          whileTap={{ scale: 0.98 }}
           onClick={() => {
             setAwaitingMyRoleOnly(false);
             setStatusFilter(statusFilter === 'IN_REVIEW' ? 'ALL' : 'IN_REVIEW');
             setCurrentPage(1);
           }}
-          className={`text-left p-4 rounded-xl border transition cursor-pointer flex items-center justify-between ${
+          className={`text-left p-4 rounded-lg border transition cursor-pointer flex items-center justify-between ${
             !awaitingMyRoleOnly && statusFilter === 'IN_REVIEW'
-              ? 'bg-amber-600 text-white border-amber-600 shadow-xs'
-              : 'bg-white text-slate-900 border-slate-200/90 hover:border-amber-300 shadow-2xs'
+              ? 'bg-blue-50/40 border-blue-600 ring-1 ring-blue-600/30 text-slate-900 shadow-sm'
+              : 'bg-white text-slate-900 border-slate-200 hover:border-slate-300 shadow-2xs'
           }`}
         >
           <div>
-            <span
-              className={`text-xs font-medium ${
-                !awaitingMyRoleOnly && statusFilter === 'IN_REVIEW'
-                  ? 'text-amber-100'
-                  : 'text-slate-500'
-              }`}
-            >
-              Involved In Review
+            <span className="text-xs font-medium text-slate-500">
+              In Review
             </span>
-            <p
-              className={`text-2xl font-bold tabular-nums mt-1 ${
-                !awaitingMyRoleOnly && statusFilter === 'IN_REVIEW'
-                  ? 'text-white'
-                  : 'text-amber-600'
-              }`}
-            >
+            <p className="text-2xl font-bold tabular-nums mt-1 text-blue-700">
               {metrics.totalInReview}
             </p>
           </div>
-          <div
-            className={`w-10 h-10 rounded-lg flex items-center justify-center ${
-              !awaitingMyRoleOnly && statusFilter === 'IN_REVIEW'
-                ? 'bg-amber-700 text-white'
-                : 'bg-amber-50 text-amber-600'
-            }`}
-          >
-            <Clock className="w-5 h-5" />
+          <div className="w-9 h-9 rounded-md bg-blue-50 text-blue-700 flex items-center justify-center shrink-0 border border-blue-200/80">
+            <Clock className="w-4 h-4" />
           </div>
-        </button>
+        </motion.button>
 
-        <button
+        <motion.button
           type="button"
+          whileHover={{ y: -2 }}
+          whileTap={{ scale: 0.98 }}
           onClick={() => {
             setAwaitingMyRoleOnly(false);
             setStatusFilter(statusFilter === 'APPROVED' ? 'ALL' : 'APPROVED');
             setCurrentPage(1);
           }}
-          className={`text-left p-4 rounded-xl border transition cursor-pointer flex items-center justify-between ${
+          className={`text-left p-4 rounded-lg border transition cursor-pointer flex items-center justify-between ${
             !awaitingMyRoleOnly && statusFilter === 'APPROVED'
-              ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs'
-              : 'bg-white text-slate-900 border-slate-200/90 hover:border-emerald-300 shadow-2xs'
+              ? 'bg-emerald-50/40 border-emerald-600 ring-1 ring-emerald-600/30 text-slate-900 shadow-sm'
+              : 'bg-white text-slate-900 border-slate-200 hover:border-slate-300 shadow-2xs'
           }`}
         >
           <div>
-            <span
-              className={`text-xs font-medium ${
-                !awaitingMyRoleOnly && statusFilter === 'APPROVED'
-                  ? 'text-emerald-100'
-                  : 'text-slate-500'
-              }`}
-            >
-              Involved Approved
+            <span className="text-xs font-medium text-slate-500">
+              Approved
             </span>
-            <p
-              className={`text-2xl font-bold tabular-nums mt-1 ${
-                !awaitingMyRoleOnly && statusFilter === 'APPROVED'
-                  ? 'text-white'
-                  : 'text-emerald-600'
-              }`}
-            >
+            <p className="text-2xl font-bold tabular-nums mt-1 text-emerald-700">
               {metrics.totalApproved}
             </p>
           </div>
-          <div
-            className={`w-10 h-10 rounded-lg flex items-center justify-center ${
-              !awaitingMyRoleOnly && statusFilter === 'APPROVED'
-                ? 'bg-emerald-700 text-white'
-                : 'bg-emerald-50 text-emerald-600'
-            }`}
-          >
-            <CheckCircle2 className="w-5 h-5" />
+          <div className="w-9 h-9 rounded-md bg-emerald-50 text-emerald-700 flex items-center justify-center shrink-0 border border-emerald-200/80">
+            <CheckCircle2 className="w-4 h-4" />
           </div>
-        </button>
+        </motion.button>
 
-        <button
+        <motion.button
           type="button"
+          whileHover={{ y: -2 }}
+          whileTap={{ scale: 0.98 }}
           onClick={() => {
             setAwaitingMyRoleOnly(false);
             setStatusFilter(statusFilter === 'REJECTED' ? 'ALL' : 'REJECTED');
             setCurrentPage(1);
           }}
-          className={`text-left p-4 rounded-xl border transition cursor-pointer flex items-center justify-between ${
+          className={`text-left p-4 rounded-lg border transition cursor-pointer flex items-center justify-between ${
             !awaitingMyRoleOnly && statusFilter === 'REJECTED'
-              ? 'bg-rose-600 text-white border-rose-600 shadow-xs'
-              : 'bg-white text-slate-900 border-slate-200/90 hover:border-rose-300 shadow-2xs'
+              ? 'bg-rose-50/40 border-rose-600 ring-1 ring-rose-600/30 text-slate-900 shadow-sm'
+              : 'bg-white text-slate-900 border-slate-200 hover:border-slate-300 shadow-2xs'
           }`}
         >
           <div>
-            <span
-              className={`text-xs font-medium ${
-                !awaitingMyRoleOnly && statusFilter === 'REJECTED'
-                  ? 'text-rose-100'
-                  : 'text-slate-500'
-              }`}
-            >
-              Involved Rejected
+            <span className="text-xs font-medium text-slate-500">
+              Rejected
             </span>
-            <p
-              className={`text-2xl font-bold tabular-nums mt-1 ${
-                !awaitingMyRoleOnly && statusFilter === 'REJECTED'
-                  ? 'text-white'
-                  : 'text-rose-600'
-              }`}
-            >
+            <p className="text-2xl font-bold tabular-nums mt-1 text-rose-700">
               {metrics.totalRejected}
             </p>
           </div>
-          <div
-            className={`w-10 h-10 rounded-lg flex items-center justify-center ${
-              !awaitingMyRoleOnly && statusFilter === 'REJECTED'
-                ? 'bg-rose-700 text-white'
-                : 'bg-rose-50 text-rose-600'
-            }`}
-          >
-            <XCircle className="w-5 h-5" />
+          <div className="w-9 h-9 rounded-md bg-rose-50 text-rose-700 flex items-center justify-center shrink-0 border border-rose-200/80">
+            <XCircle className="w-4 h-4" />
           </div>
-        </button>
+        </motion.button>
       </div>
 
-      {/* Unified Filter & Search Bar (Scoped to Role & Site) */}
-      <div className="corporate-card p-3 rounded-xl flex flex-wrap items-center gap-2.5">
+      {/* Filter & Search Bar */}
+      <div className="corporate-card p-2.5 rounded-lg flex flex-wrap items-center gap-2">
         <div className="relative flex-1 min-w-[220px]">
           <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
           <input
+            ref={searchInputRef}
             type="text"
             aria-label="Search involved applications"
-            placeholder="Search by reference, applicant name, employee #, or site..."
+            placeholder="Search by reference, applicant, employee #, or form... (Press / to focus)"
             value={searchQuery}
             onChange={(e) => {
               setSearchQuery(e.target.value);
               setCurrentPage(1);
             }}
-            className="w-full pl-9 pr-8 py-2 border border-slate-200 rounded-lg text-xs bg-slate-50/70 hover:bg-white focus:bg-white focus:border-sky-600 focus:outline-hidden transition"
+            className="w-full pl-9 pr-14 py-1.5 border border-slate-200 rounded-md text-xs bg-slate-50/70 hover:bg-white focus:bg-white focus:border-blue-600 focus:outline-hidden transition"
           />
-          {searchQuery && (
-            <button
-              type="button"
-              onClick={() => setSearchQuery('')}
-              aria-label="Clear search query"
-              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
-            >
-              <X className="w-3.5 h-3.5" />
-            </button>
-          )}
+          <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
+            {searchQuery ? (
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                aria-label="Clear search query"
+                className="text-slate-400 hover:text-slate-600 p-0.5 cursor-pointer"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            ) : (
+              <kbd className="hidden sm:inline-block px-1.5 py-0.5 text-[10px] font-mono text-slate-400 bg-slate-100 border border-slate-200 rounded">
+                /
+              </kbd>
+            )}
+          </div>
         </div>
 
         {/* Department Filter (Only shows departments involving this role) */}
@@ -618,7 +583,7 @@ export const MasterSheetView: React.FC<MasterSheetViewProps> = ({
             setFormFilter('ALL');
             setCurrentPage(1);
           }}
-          className="border border-slate-200 bg-white hover:bg-slate-50 rounded-lg px-3 py-2 text-xs font-medium text-slate-700 cursor-pointer"
+          className="border border-slate-200 bg-white hover:bg-slate-50 rounded-md px-2.5 py-1.5 text-xs font-medium text-slate-700 cursor-pointer"
         >
           <option value="ALL">
             Department: All Involved ({permittedDepartments.length})
@@ -645,7 +610,7 @@ export const MasterSheetView: React.FC<MasterSheetViewProps> = ({
             setFormFilter(e.target.value as FormCode | 'ALL');
             setCurrentPage(1);
           }}
-          className="border border-slate-200 bg-white hover:bg-slate-50 rounded-lg px-3 py-2 text-xs font-medium text-slate-700 cursor-pointer max-w-[200px] truncate"
+          className="border border-slate-200 bg-white hover:bg-slate-50 rounded-md px-2.5 py-1.5 text-xs font-medium text-slate-700 cursor-pointer max-w-[200px] truncate"
         >
           <option value="ALL">Form: All Involved ({permittedForms.length})</option>
           {permittedForms
@@ -666,7 +631,7 @@ export const MasterSheetView: React.FC<MasterSheetViewProps> = ({
               setSiteFilter(e.target.value);
               setCurrentPage(1);
             }}
-            className="border border-slate-200 bg-white hover:bg-slate-50 rounded-lg px-3 py-2 text-xs font-medium text-slate-700 cursor-pointer max-w-[190px] truncate"
+            className="border border-slate-200 bg-white hover:bg-slate-50 rounded-md px-2.5 py-1.5 text-xs font-medium text-slate-700 cursor-pointer max-w-[190px] truncate"
           >
             <option value="ALL">Site: All Sites</option>
             {sites.map((site) => (
@@ -677,7 +642,7 @@ export const MasterSheetView: React.FC<MasterSheetViewProps> = ({
           </select>
         ) : (
           <div
-            className="inline-flex items-center gap-1.5 border border-slate-200 bg-slate-100 rounded-lg px-3 py-2 text-xs font-semibold text-slate-700"
+            className="inline-flex items-center gap-1.5 border border-slate-200 bg-slate-100 rounded-md px-2.5 py-1.5 text-xs font-semibold text-slate-700"
             title="Your role is strictly bound to your assigned site"
           >
             <Lock className="w-3.5 h-3.5 text-slate-500 shrink-0" />
@@ -694,7 +659,7 @@ export const MasterSheetView: React.FC<MasterSheetViewProps> = ({
             setStatusFilter(e.target.value as LifecycleStatus | 'ALL');
             setCurrentPage(1);
           }}
-          className="border border-slate-200 bg-white hover:bg-slate-50 rounded-lg px-3 py-2 text-xs font-medium text-slate-700 cursor-pointer"
+          className="border border-slate-200 bg-white hover:bg-slate-50 rounded-md px-2.5 py-1.5 text-xs font-medium text-slate-700 cursor-pointer"
         >
           <option value="ALL">Status: All</option>
           <option value="IN_REVIEW">In Review</option>
@@ -708,7 +673,7 @@ export const MasterSheetView: React.FC<MasterSheetViewProps> = ({
           <button
             type="button"
             onClick={resetFilters}
-            className="flex items-center gap-1 px-2.5 py-2 rounded-lg text-xs font-semibold text-rose-700 hover:bg-rose-50 border border-rose-200 transition cursor-pointer"
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs font-semibold text-rose-700 hover:bg-rose-50 border border-rose-200 transition cursor-pointer"
             title="Reset All Filters"
           >
             <RotateCcw className="w-3.5 h-3.5" />
@@ -716,7 +681,7 @@ export const MasterSheetView: React.FC<MasterSheetViewProps> = ({
           </button>
         )}
 
-        <div className="flex items-center gap-2 border border-slate-200 rounded-lg px-3 py-1.5 bg-slate-50 text-xs font-medium text-slate-700 ml-auto shrink-0">
+        <div className="flex items-center gap-1.5 border border-slate-200 rounded-md px-2.5 py-1 bg-slate-50 text-xs font-medium text-slate-700 ml-auto shrink-0">
           <span className="text-slate-500">Showing:</span>
           <span className="font-bold font-mono tabular-nums text-slate-900">
             {filteredApps.length}
@@ -725,38 +690,50 @@ export const MasterSheetView: React.FC<MasterSheetViewProps> = ({
       </div>
 
       {/* Bulk Selection Action Bar */}
-      {selectedIds.size > 0 && (
-        <div className="bg-sky-50 border border-sky-200 rounded-xl p-3 flex items-center justify-between shadow-2xs">
-          <div className="flex items-center gap-2 text-xs text-sky-950 font-semibold">
-            <CheckSquare className="w-4 h-4 text-sky-600" />
-            <span>{selectedIds.size} application(s) selected</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => exportSelectedOrAllToCsv(true)}
-              className="px-3 py-1.5 rounded-lg bg-slate-900 text-white text-xs font-semibold hover:bg-slate-800 transition cursor-pointer"
-            >
-              Export Selected ({selectedIds.size})
-            </button>
-            <button
-              type="button"
-              onClick={() => setSelectedIds(new Set())}
-              className="px-3 py-1.5 rounded-lg border border-slate-300 bg-white text-slate-700 text-xs font-semibold hover:bg-slate-100 transition cursor-pointer"
-            >
-              Clear Selection
-            </button>
-          </div>
-        </div>
-      )}
+      <AnimatePresence>
+        {selectedIds.size > 0 && (
+          <motion.div
+            initial={{ opacity: 0, height: 0, scale: 0.98 }}
+            animate={{ opacity: 1, height: 'auto', scale: 1 }}
+            exit={{ opacity: 0, height: 0, scale: 0.98 }}
+            transition={{ duration: 0.2, ease: 'easeOut' }}
+            className="bg-blue-50/70 border border-blue-200 rounded-lg p-2.5 flex items-center justify-between shadow-2xs overflow-hidden"
+          >
+            <div className="flex items-center gap-2 text-xs text-blue-950 font-semibold">
+              <CheckSquare className="w-4 h-4 text-blue-600" />
+              <span>{selectedIds.size} application(s) selected</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <motion.button
+                type="button"
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.97 }}
+                onClick={() => exportSelectedOrAllToCsv(true)}
+                className="px-3 py-1.5 rounded-md bg-slate-900 text-white text-xs font-semibold hover:bg-slate-800 transition cursor-pointer"
+              >
+                Export Selected ({selectedIds.size})
+              </motion.button>
+              <motion.button
+                type="button"
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.97 }}
+                onClick={() => setSelectedIds(new Set())}
+                className="px-3 py-1.5 rounded-md border border-slate-300 bg-white text-slate-700 text-xs font-semibold hover:bg-slate-100 transition cursor-pointer"
+              >
+                Clear Selection
+              </motion.button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Corporate Data Table */}
-      <div className="corporate-card rounded-xl overflow-hidden">
+      <div className="corporate-card rounded-lg overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
             <thead>
-              <tr className="bg-slate-50 border-b border-slate-200/90 text-[11px] font-bold uppercase tracking-wider text-slate-500">
-                <th className="py-3.5 px-4 w-10">
+              <tr className="sticky top-0 bg-slate-50 z-10 border-b border-slate-200 text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                <th className="py-3 px-4 w-10">
                   <input
                     type="checkbox"
                     aria-label="Select all visible rows"
@@ -765,7 +742,7 @@ export const MasterSheetView: React.FC<MasterSheetViewProps> = ({
                       selectedIds.size === paginatedApps.length
                     }
                     onChange={toggleSelectAll}
-                    className="rounded border-slate-300 text-sky-600 focus:ring-sky-500 cursor-pointer"
+                    className="rounded-sm border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
                   />
                 </th>
                 <th
@@ -875,7 +852,7 @@ export const MasterSheetView: React.FC<MasterSheetViewProps> = ({
                           aria-label={`Select ${app.reference_number}`}
                           checked={isSelected}
                           onChange={() => {}}
-                          className="rounded border-slate-300 text-sky-600 focus:ring-sky-500 cursor-pointer"
+                          className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
                         />
                       </td>
 
@@ -944,21 +921,36 @@ export const MasterSheetView: React.FC<MasterSheetViewProps> = ({
                       </td>
 
                       <td className="py-3.5 px-4 text-right whitespace-nowrap">
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setSelectedApp(app);
-                          }}
-                          className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
-                            isMyTurn
-                              ? 'bg-slate-900 text-white hover:bg-slate-800 shadow-2xs'
-                              : 'bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200/80'
-                          }`}
-                        >
-                          <Eye className="w-3.5 h-3.5" />
-                          <span>{isMyTurn ? 'Review & Sign' : 'Inspect'}</span>
-                        </button>
+                        <div className="flex items-center justify-end gap-1.5">
+                          <motion.button
+                            type="button"
+                            whileHover={{ scale: 1.05 }}
+                            whileTap={{ scale: 0.95 }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setPrintModalApp(app);
+                            }}
+                            title="Print / Save Official PDF"
+                            className="p-1.5 rounded-md border border-slate-200 bg-white text-slate-600 hover:text-slate-900 hover:bg-slate-50 transition cursor-pointer shadow-2xs"
+                          >
+                            <Printer className="w-3.5 h-3.5" />
+                          </motion.button>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedApp(app);
+                            }}
+                            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition cursor-pointer ${
+                              isMyTurn
+                                ? 'bg-slate-900 text-white hover:bg-slate-800 shadow-2xs'
+                                : 'bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200/80'
+                            }`}
+                          >
+                            <Eye className="w-3.5 h-3.5" />
+                            <span>{isMyTurn ? 'Review & Sign' : 'Inspect'}</span>
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -991,7 +983,7 @@ export const MasterSheetView: React.FC<MasterSheetViewProps> = ({
               type="button"
               disabled={currentPage <= 1}
               onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-              className="p-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-30 transition cursor-pointer"
+              className="p-1.5 rounded-md border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-30 transition cursor-pointer"
               title="Previous Page"
             >
               <ChevronLeft className="w-4 h-4" />
@@ -1016,7 +1008,7 @@ export const MasterSheetView: React.FC<MasterSheetViewProps> = ({
                     <button
                       type="button"
                       onClick={() => setCurrentPage(page)}
-                      className={`min-w-[28px] h-7 px-2 rounded-lg text-xs font-semibold tabular-nums transition cursor-pointer ${
+                      className={`min-w-[28px] h-7 px-2 rounded-md text-xs font-semibold tabular-nums transition cursor-pointer ${
                         currentPage === page
                           ? 'bg-slate-900 text-white shadow-2xs'
                           : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
@@ -1032,7 +1024,7 @@ export const MasterSheetView: React.FC<MasterSheetViewProps> = ({
               type="button"
               disabled={currentPage >= totalPages}
               onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-              className="p-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-30 transition cursor-pointer"
+              className="p-1.5 rounded-md border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-30 transition cursor-pointer"
               title="Next Page"
             >
               <ChevronRight className="w-4 h-4" />
@@ -1045,7 +1037,7 @@ export const MasterSheetView: React.FC<MasterSheetViewProps> = ({
                 setPageSize(Number(e.target.value));
                 setCurrentPage(1);
               }}
-              className="ml-2 border border-slate-200 rounded-lg px-2.5 py-1 text-xs font-semibold text-slate-700 bg-white cursor-pointer"
+              className="ml-2 border border-slate-200 rounded-md px-2.5 py-1 text-xs font-semibold text-slate-700 bg-white cursor-pointer"
             >
               <option value={5}>5 / page</option>
               <option value={10}>10 / page</option>
@@ -1057,12 +1049,29 @@ export const MasterSheetView: React.FC<MasterSheetViewProps> = ({
       </div>
 
       {/* Unified Detail & Decision Drawer */}
-      {selectedApp && (
-        <ApplicationDetailDrawer
-          application={selectedApp}
-          onClose={() => setSelectedApp(null)}
-        />
-      )}
+      <AnimatePresence>
+        {selectedApp && (
+          <ApplicationDetailDrawer
+            application={selectedApp}
+            onClose={() => setSelectedApp(null)}
+            onEdit={(app) => {
+              setSelectedApp(null);
+              setEditingApp(app);
+              setShowNewModal(true);
+            }}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Official Document Facsimile / Print PDF Modal */}
+      <AnimatePresence>
+        {printModalApp && (
+          <DocumentFacsimileModal
+            application={printModalApp}
+            onClose={() => setPrintModalApp(null)}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 };

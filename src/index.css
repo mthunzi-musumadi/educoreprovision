@@ -3,23 +3,23 @@
 @theme {
   --font-sans: 'Plus Jakarta Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  --radius-xs: 0.25rem;
-  --radius-sm: 0.375rem;
-  --radius-md: 0.5rem;
-  --radius-lg: 0.75rem;
-  --radius-xl: 1rem;
-  --radius-2xl: 1.25rem;
-  --radius-3xl: 1.75rem;
+  --radius-xs: 0.125rem;
+  --radius-sm: 0.25rem;
+  --radius-md: 0.375rem;
+  --radius-lg: 0.5rem;
+  --radius-xl: 0.75rem;
+  --radius-2xl: 0.875rem;
+  --radius-3xl: 1rem;
   --radius-full: 9999px;
-  --radius: 0.75rem;
+  --radius: 0.5rem;
   --shadow-2xs: 0 1px 2px 0 rgba(15, 23, 42, 0.04);
   --shadow-xs: 0 1px 3px 0 rgba(15, 23, 42, 0.06), 0 1px 2px -1px rgba(15, 23, 42, 0.06);
-  --shadow-sm: 0 2px 4px 0 rgba(15, 23, 42, 0.05);
-  --shadow: 0 4px 6px -1px rgba(15, 23, 42, 0.07), 0 2px 4px -2px rgba(15, 23, 42, 0.06);
-  --shadow-md: 0 8px 16px -2px rgba(15, 23, 42, 0.06), 0 4px 8px -3px rgba(15, 23, 42, 0.05);
-  --shadow-lg: 0 14px 24px -4px rgba(15, 23, 42, 0.08), 0 6px 12px -5px rgba(15, 23, 42, 0.06);
-  --shadow-xl: 0 20px 32px -6px rgba(15, 23, 42, 0.09), 0 8px 16px -6px rgba(15, 23, 42, 0.07);
-  --shadow-2xl: 0 28px 60px -12px rgba(15, 23, 42, 0.16);
+  --shadow-sm: 0 2px 4px 0 rgba(15, 23, 42, 0.04);
+  --shadow: 0 4px 6px -1px rgba(15, 23, 42, 0.06), 0 2px 4px -2px rgba(15, 23, 42, 0.04);
+  --shadow-md: 0 6px 12px -2px rgba(15, 23, 42, 0.06), 0 3px 6px -3px rgba(15, 23, 42, 0.04);
+  --shadow-lg: 0 12px 20px -4px rgba(15, 23, 42, 0.08), 0 4px 8px -4px rgba(15, 23, 42, 0.04);
+  --shadow-xl: 0 16px 28px -6px rgba(15, 23, 42, 0.09);
+  --shadow-2xl: 0 24px 48px -12px rgba(15, 23, 42, 0.14);
 }
 
 @layer base {
@@ -53,8 +53,8 @@
 
   /* Accessible high-contrast focus rings (WCAG 2.2 AA) */
   :focus-visible {
-    outline: 2px solid #0284c7;
-    outline-offset: 2px;
+    outline: 2px solid #2563eb;
+    outline-offset: 1px;
   }
 
   /* Post-interaction validation feedback (:user-invalid / :user-valid) */
@@ -79,20 +79,148 @@
 
 .corporate-card {
   background: #ffffff;
-  border: 1px solid rgba(226, 232, 240, 0.9);
-  box-shadow: 0 1px 3px 0 rgba(15, 23, 42, 0.04), 0 1px 2px -1px rgba(15, 23, 42, 0.03);
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 1px 2px 0 rgba(15, 23, 42, 0.04);
+  transition: border-color 200ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 200ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .corporate-card-interactive {
   background: #ffffff;
-  border: 1px solid rgba(226, 232, 240, 0.9);
-  box-shadow: 0 1px 3px 0 rgba(15, 23, 42, 0.04), 0 1px 2px -1px rgba(15, 23, 42, 0.03);
-  transition: transform 150ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 150ms cubic-bezier(0.16, 1, 0.3, 1), border-color 150ms ease;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 1px 2px 0 rgba(15, 23, 42, 0.04);
+  transition: border-color 200ms cubic-bezier(0.16, 1, 0.3, 1),
+              background-color 200ms cubic-bezier(0.16, 1, 0.3, 1),
+              box-shadow 200ms cubic-bezier(0.16, 1, 0.3, 1),
+              transform 200ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .corporate-card-interactive:hover {
   border-color: #cbd5e1;
-  box-shadow: 0 8px 20px -4px rgba(15, 23, 42, 0.07), 0 2px 6px -2px rgba(15, 23, 42, 0.04);
+  background-color: #ffffff;
+  box-shadow: 0 10px 20px -3px rgba(15, 23, 42, 0.07), 0 4px 8px -2px rgba(15, 23, 42, 0.03);
+  transform: translateY(-1.5px);
+}
+
+.corporate-card-interactive:active {
+  transform: translateY(0);
+  box-shadow: 0 2px 4px 0 rgba(15, 23, 42, 0.04);
+}
+
+/* Reactive pulsing beacon for active approval steps and notifications */
+@keyframes reactive-beacon {
+  0% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.6);
+  }
+  70% {
+    transform: scale(1);
+    box-shadow: 0 0 0 6px rgba(245, 158, 11, 0);
+  }
+  100% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(245, 158, 11, 0);
+  }
+}
+
+.beacon-pulse {
+  animation: reactive-beacon 2s infinite cubic-bezier(0.4, 0, 0.6, 1);
+}
+
+/* Subtle breathing glow for pending badge */
+@keyframes reactive-glow {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+
+.live-dot-pulse {
+  animation: reactive-glow 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Shimmer effect for skeleton loading states */
+@keyframes shimmer-sweep {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+.shimmer-animated {
+  position: relative;
+  overflow: hidden;
+}
+
+.shimmer-animated::after {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  transform: translateX(-100%);
+  background-image: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.6) 50%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  animation: shimmer-sweep 1.8s infinite ease-in-out;
+  content: '';
+}
+
+/* ==========================================================================
+   PHYSICAL DOCUMENT & REQUISITION DOSSIER FACSIMILE STYLES (SIMULATION)
+   ========================================================================== */
+.physical-document-sheet {
+  background-color: #fdfcf7;
+  border: 1px solid #e7e5e0;
+  box-shadow: 0 4px 20px -2px rgba(45, 38, 28, 0.08), 0 1px 4px 0 rgba(45, 38, 28, 0.04);
+}
+
+.binder-punch-hole {
+  width: 0.875rem;
+  height: 0.875rem;
+  border-radius: 9999px;
+  background-color: #dfd8cc;
+  box-shadow: inset 0 1.5px 3px rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(120, 113, 108, 0.4);
+}
+
+.rubber-stamp {
+  font-family: var(--font-mono);
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  user-select: none;
+  mix-blend-mode: multiply;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.06);
+}
+
+.perforated-tear-line {
+  background-image: linear-gradient(to right, #a8a29e 50%, rgba(255, 255, 255, 0) 0%);
+  background-position: bottom;
+  background-size: 10px 1.5px;
+  background-repeat: repeat-x;
+}
+
+/* Accessibility: Gracefully respect prefers-reduced-motion */
+@media (prefers-reduced-motion: reduce) {
+  .corporate-card-interactive {
+    transition: none !important;
+    transform: none !important;
+  }
+  .corporate-card-interactive:hover {
+    transform: none !important;
+  }
+  .beacon-pulse,
+  .live-dot-pulse,
+  .shimmer-animated::after {
+    animation: none !important;
+  }
 }
 
 /* Print styles for digital document facsimile */
@@ -129,7 +257,12 @@
     height: 0 !important;
   }
 
-  .no-print {
+  .no-print,
+  aside,
+  header,
+  nav,
+  body:has(.document-modal-overlay) main,
+  body:has(.document-modal-overlay) [aria-label*="Details"] > div:not(.document-modal-overlay) {
     display: none !important;
   }
 

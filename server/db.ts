@@ -1,6 +1,8 @@
 import dotenv from 'dotenv';
 import { Pool, PoolClient } from 'pg';
 import { UserProfile } from '../src/types/index.ts';
+import { triggerStageNotification } from './notifications.ts';
+import { validateApplicationForm } from '../src/utils/formValidation.ts';
 
 dotenv.config();
 
@@ -284,64 +286,12 @@ export function validateFormPayload(formCode: FormCode, payload: Record<string, 
     if (payload.school && !payload.site) payload.site = payload.school;
   }
 
-  const required = REQUIRED_PAYLOAD_FIELDS[formCode];
-  if (!required) {
-    throw new Error(`Unknown form code: ${formCode}`);
-  }
-
-  const missing = required.filter(
-    (key) => payload[key] === undefined || payload[key] === null || payload[key] === ''
-  );
-  if (missing.length > 0) {
-    throw new Error(`Invalid payload for ${formCode}. Missing required fields: ${missing.join(', ')}`);
-  }
-
-  // Validate multi-child array for CHILD_ADMISSION
-  if (formCode === 'CHILD_ADMISSION') {
-    if (!Array.isArray(payload.children) || payload.children.length === 0) {
-      throw new Error('At least one child must be added to the Child Admission form.');
-    }
-    payload.children.forEach((child: any, idx: number) => {
-      if (!child.child_full_name || !child.date_of_birth || !child.target_site_id) {
-        throw new Error(
-          `Child #${idx + 1} is missing required fields (Name, Date of Birth, or Target Site).`
-        );
-      }
-    });
-  }
-
-  // Validate line-item arrays for STORES_REQ & STOCK_RETURN
-  if (formCode === 'STORES_REQ' || formCode === 'STOCK_RETURN') {
-    if (!Array.isArray(payload.items) || payload.items.length === 0) {
-      throw new Error(`At least one line item is required for ${formCode}.`);
-    }
-  }
-
-  if (formCode === 'TRAVEL_REQUEST') {
-    if (!Array.isArray(payload.passengers) || payload.passengers.length === 0) {
-      throw new Error('At least one passenger must be listed on the Travel Request Form.');
-    }
-    payload.passengers.forEach((p: any, idx: number) => {
-      if (!p.surname || !p.first_name || !p.date_of_birth) {
-        throw new Error(
-          `Passenger #${idx + 1} is missing required ID details (Surname, First Name, or Date of Birth).`
-        );
-      }
-    });
-  }
-
-  if (formCode === 'EDU_HEALTH_CLAIM') {
-    if (!Array.isArray(payload.claim_items) || payload.claim_items.length === 0) {
-      throw new Error('At least one expense/treatment row is required in Claim Details.');
-    }
-    if (!payload.confirm_true_and_correct || !payload.consent_medical_info_processing) {
-      throw new Error('Both Section 4 medical consent and truthfulness declarations must be ticked.');
-    }
-    if (payload.payment_method === 'BANK_TRANSFER') {
-      if (!payload.bank_name || !payload.account_holder_name || !payload.account_number) {
-        throw new Error('Bank Name, Account Holder Name, and Account Number are required for Bank Transfer reimbursement.');
-      }
-    }
+  const validation = validateApplicationForm(formCode, payload);
+  if (!validation.isValid) {
+    const missing = Object.entries(validation.errors)
+      .map(([k, v]) => `${k}: ${v}`)
+      .join('; ');
+    throw new Error(`Invalid payload for ${formCode}. Missing required fields: ${missing}`);
   }
 }
 
@@ -367,7 +317,9 @@ export interface CreateApplicationInput {
  * Automatically resolves the first approver role from `form_definitions.workflow_pipeline`.
  */
 export async function createApplication(input: CreateApplicationInput) {
-  validateFormPayload(input.formCode, input.payload);
+  if (input.submitImmediately) {
+    validateFormPayload(input.formCode, input.payload);
+  }
 
   return withRlsContext(input.entraOid, async (client) => {
     // 1. Resolve authenticated user
@@ -484,6 +436,10 @@ export async function createApplication(input: CreateApplicationInput) {
       ]
     );
 
+    if (input.submitImmediately) {
+      await triggerStageNotification(client, 'APPLICATION_SUBMITTED', createdApp.id);
+    }
+
     return createdApp;
   });
 }
@@ -534,11 +490,11 @@ export async function processApprovalStep(input: ProcessApprovalInput) {
     // 3. Fetch the active approval step
     const stepRes = await client.query(
       `SELECT * FROM public.application_approvals 
-       WHERE application_id = $1 AND step_order = $2 FOR UPDATE`,
+       WHERE application_id = $1 AND step_order = $2`,
       [app.id, app.current_step_order]
     );
     if (stepRes.rowCount === 0) {
-      throw new Error(`Active approval step ${app.current_step_order} not found.`);
+      throw new Error(`Active approval step ${app.current_step_order} not found or access denied.`);
     }
     const currentStep = stepRes.rows[0];
 
@@ -560,7 +516,7 @@ export async function processApprovalStep(input: ProcessApprovalInput) {
     }
 
     // 5. Update current approval step
-    await client.query(
+    const updateStepRes = await client.query(
       `UPDATE public.application_approvals
        SET status = $1,
            reviewer_id = $2,
@@ -571,7 +527,8 @@ export async function processApprovalStep(input: ProcessApprovalInput) {
            digital_signature = $7,
            signed_at = NOW(),
            updated_at = NOW()
-       WHERE id = $8`,
+       WHERE id = $8
+       RETURNING *`,
       [
         input.decision,
         actor.id,
@@ -583,6 +540,10 @@ export async function processApprovalStep(input: ProcessApprovalInput) {
         currentStep.id,
       ]
     );
+
+    if (!updateStepRes.rowCount || updateStepRes.rowCount === 0) {
+      throw new Error(`Failed to update approval step ${currentStep.step_order}. RLS permission denied.`);
+    }
 
     // 6. Calculate next lifecycle state
     let nextAppStatus: LifecycleStatus = app.status;
@@ -651,7 +612,253 @@ export async function processApprovalStep(input: ProcessApprovalInput) {
       ]
     );
 
+    // Event-driven email notification dispatch
+    if (input.decision === 'REJECTED') {
+      await triggerStageNotification(client, 'APPLICATION_REJECTED', app.id, { reviewerComments: input.comments ?? undefined });
+    } else if (input.decision === 'REVISION_REQUESTED') {
+      await triggerStageNotification(client, 'REVISION_REQUESTED', app.id, { reviewerComments: input.comments ?? undefined });
+    } else if (input.decision === 'APPROVED') {
+      if (nextAppStatus === 'APPROVED') {
+        await triggerStageNotification(client, 'APPLICATION_APPROVED', app.id, { reviewerComments: input.comments ?? undefined });
+      } else {
+        await triggerStageNotification(client, 'STEP_ADVANCED', app.id, { reviewerComments: input.comments ?? undefined });
+      }
+    }
+
     return updatedAppRes.rows[0];
+  });
+}
+
+export interface UpdateApplicationInput {
+  entraOid: string;
+  applicationId: string;
+  payload: Record<string, any>;
+  submitImmediately: boolean;
+  termsAccepted?: boolean;
+  digitalSignature?: string | null;
+}
+
+/**
+ * Updates an application in DRAFT or REVISION_REQUIRED status.
+ * Resets approval steps and re-routes to Step 1 if submitted immediately.
+ */
+export async function updateApplication(input: UpdateApplicationInput) {
+  return withRlsContext(input.entraOid, async (client) => {
+    // 1. Fetch actor
+    const actorRes = await client.query(
+      `SELECT u.id, u.full_name, u.role, u.site_id, s.code AS site_code
+       FROM public.users u
+       JOIN public.sites s ON s.id = u.site_id
+       WHERE u.entra_oid::text = $1 AND u.is_active = true`,
+      [input.entraOid]
+    );
+    if (actorRes.rowCount === 0) {
+      throw new Error('User not found or inactive.');
+    }
+    const actor = actorRes.rows[0];
+
+    // 2. Fetch and lock application
+    const appRes = await client.query(
+      `SELECT a.*, fd.code AS form_code, fd.title AS form_title, fd.requires_policy, fd.workflow_pipeline
+       FROM public.applications a
+       JOIN public.form_definitions fd ON a.form_definition_id = fd.id
+       WHERE a.id = $1 FOR UPDATE`,
+      [input.applicationId]
+    );
+    if (appRes.rowCount === 0) {
+      throw new Error('Application not found or access denied under least-privilege policy.');
+    }
+    const app = appRes.rows[0];
+
+    // 3. Status validation: must be DRAFT or REVISION_REQUIRED
+    if (!['DRAFT', 'REVISION_REQUIRED'].includes(app.status)) {
+      throw new Error(
+        `Cannot modify application ${app.reference_number} in '${app.status}' status. Only DRAFT or REVISION_REQUIRED requests can be edited.`
+      );
+    }
+
+    // 4. Ownership validation: must be applicant or Central SUPER_ADMIN
+    if (app.applicant_id !== actor.id && (actor.role !== 'SUPER_ADMIN' || actor.site_code !== 'CENTRAL')) {
+      throw new Error('Permission denied: You can only edit your own applications.');
+    }
+
+    const wasRevision = app.status === 'REVISION_REQUIRED';
+    let nextStatus: LifecycleStatus = app.status;
+    let nextStepOrder: number | null = app.current_step_order;
+    let nextApproverRole: UserRole | null = app.current_approver_role;
+
+    if (input.submitImmediately) {
+      // Validate full payload against the form schema
+      validateFormPayload(app.form_code as FormCode, input.payload);
+
+      if (app.requires_policy && !input.termsAccepted && !app.terms_accepted) {
+        throw new Error('You must accept the terms and conditions policy before submitting this application.');
+      }
+
+      const pipeline: WorkflowPipelineStep[] = app.workflow_pipeline || [];
+      if (pipeline.length === 0) {
+        throw new Error(`No approval pipeline configured for form ${app.form_code}.`);
+      }
+
+      nextStatus = 'IN_REVIEW';
+      nextStepOrder = 1;
+      nextApproverRole = pipeline[0].role;
+
+      // Safely reset all approval steps back to PENDING and clear signatures via security definer function
+      await client.query(`SELECT public.reset_application_approval_pipeline($1)`, [app.id]);
+    }
+
+    // Update envelope
+    const updatedRes = await client.query(
+      `UPDATE public.applications
+       SET payload = $1::jsonb,
+           status = $2::lifecycle_status,
+           current_step_order = $3,
+           current_approver_role = $4::user_role,
+           terms_accepted = CASE WHEN $5::boolean IS NOT NULL THEN $5::boolean ELSE terms_accepted END,
+           terms_accepted_at = CASE WHEN $5::boolean = true THEN NOW() ELSE terms_accepted_at END,
+           applicant_digital_signature = COALESCE($6, applicant_digital_signature),
+           applicant_signed_at = CASE WHEN $6 IS NOT NULL OR $2::text = 'IN_REVIEW' THEN NOW() ELSE applicant_signed_at END,
+           updated_at = NOW()
+       WHERE id = $7
+       RETURNING *`,
+      [
+        JSON.stringify(input.payload),
+        nextStatus,
+        nextStepOrder,
+        nextApproverRole,
+        input.termsAccepted ?? null,
+        input.digitalSignature ?? null,
+        app.id,
+      ]
+    );
+
+    // Audit log
+    const actionType = input.submitImmediately
+      ? wasRevision
+        ? 'REVISION_RESUBMITTED'
+        : 'DRAFT_SUBMITTED'
+      : 'DRAFT_UPDATED';
+
+    await client.query(
+      `INSERT INTO public.approval_audit_logs (
+        application_id, actor_id, actor_name, actor_role, action_type, from_status, to_status, comments, metadata
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [
+        app.id,
+        actor.id,
+        actor.full_name,
+        actor.role,
+        actionType,
+        app.status,
+        nextStatus,
+        input.submitImmediately
+          ? wasRevision
+            ? 'Applicant addressed requested revisions and resubmitted application for review.'
+            : 'Applicant submitted finalized draft application for review.'
+          : 'Applicant updated draft payload.',
+        JSON.stringify({
+          form_code: app.form_code,
+          next_step_order: nextStepOrder,
+          next_approver_role: nextApproverRole,
+        }),
+      ]
+    );
+
+    if (input.submitImmediately) {
+      await triggerStageNotification(client, 'APPLICATION_SUBMITTED', app.id);
+    }
+
+    return updatedRes.rows[0];
+  });
+}
+
+export interface ApplicationAttachment {
+  id: string;
+  application_id: string;
+  uploader_id: string;
+  uploader_name?: string;
+  file_name: string;
+  file_size_bytes: number;
+  mime_type: string;
+  storage_path: string;
+  created_at: string;
+}
+
+export async function addApplicationAttachment(
+  entraOid: string,
+  applicationId: string,
+  file: {
+    fileName: string;
+    fileSizeBytes: number;
+    mimeType: string;
+    storagePath: string;
+  }
+): Promise<ApplicationAttachment> {
+  return withRlsContext(entraOid, async (client) => {
+    const userRes = await client.query(
+      `SELECT id, full_name FROM public.users WHERE entra_oid::text = $1 AND is_active = true`,
+      [entraOid]
+    );
+    if (userRes.rowCount === 0) {
+      throw new Error('User not found or inactive.');
+    }
+    const user = userRes.rows[0];
+
+    const insertRes = await client.query(
+      `INSERT INTO public.application_attachments (
+         application_id, uploader_id, file_name, file_size_bytes, mime_type, storage_path
+       ) VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING *`,
+      [
+        applicationId,
+        user.id,
+        file.fileName,
+        file.fileSizeBytes,
+        file.mimeType,
+        file.storagePath,
+      ]
+    );
+
+    return {
+      ...insertRes.rows[0],
+      uploader_name: user.full_name,
+    };
+  });
+}
+
+export async function getApplicationAttachments(
+  entraOid: string,
+  applicationId: string
+): Promise<ApplicationAttachment[]> {
+  return withRlsContext(entraOid, async (client) => {
+    const res = await client.query(
+      `SELECT att.*, u.full_name AS uploader_name
+       FROM public.application_attachments att
+       JOIN public.users u ON att.uploader_id = u.id
+       WHERE att.application_id = $1
+       ORDER BY att.created_at ASC`,
+      [applicationId]
+    );
+    return res.rows;
+  });
+}
+
+export async function deleteApplicationAttachment(
+  entraOid: string,
+  attachmentId: string
+): Promise<{ success: boolean; storagePath: string }> {
+  return withRlsContext(entraOid, async (client) => {
+    const res = await client.query(
+      `DELETE FROM public.application_attachments
+       WHERE id = $1
+       RETURNING storage_path`,
+      [attachmentId]
+    );
+    if (res.rowCount === 0) {
+      throw new Error('Attachment not found or delete permission denied.');
+    }
+    return { success: true, storagePath: res.rows[0].storage_path };
   });
 }
 
@@ -673,6 +880,7 @@ export async function withdrawApplication(
     if (!res.rowCount || res.rowCount === 0) {
       throw new Error('Failed to withdraw application.');
     }
+    await triggerStageNotification(client, 'APPLICATION_WITHDRAWN', applicationId, { reviewerComments: reason });
     return res.rows[0];
   });
 }

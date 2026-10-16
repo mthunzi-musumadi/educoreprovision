@@ -1,9 +1,11 @@
 import express, { Request, Response, NextFunction } from 'express';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 import crypto from 'crypto';
 import dotenv from 'dotenv';
+import multer from 'multer';
 import {
   getMicrosoftOidcConfig,
   generatePkce,
@@ -18,6 +20,7 @@ import {
   getFormDefinitions,
   getApplicationsQueue,
   createApplication,
+  updateApplication,
   processApprovalStep,
   getLegacyPurchaseApplications,
   endorseIctApplicationByGM,
@@ -25,6 +28,9 @@ import {
   signOffIctApplicationByIT,
   upsertUserFromEntraClaims,
   withdrawApplication,
+  addApplicationAttachment,
+  getApplicationAttachments,
+  deleteApplicationAttachment,
   FormCode,
   LifecycleStatus,
 } from './server/db.ts';
@@ -33,6 +39,28 @@ dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// Ensure upload directory exists for supporting documents
+const uploadDir = path.resolve(__dirname, 'uploads');
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
+}
+
+const uploadStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => {
+    cb(null, uploadDir);
+  },
+  filename: (_req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+    const sanitizedOriginal = file.originalname.replace(/[^a-zA-Z0-9.-]/g, '_');
+    cb(null, `${uniqueSuffix}_${sanitizedOriginal}`);
+  },
+});
+
+const upload = multer({
+  storage: uploadStorage,
+  limits: { fileSize: 15 * 1024 * 1024 }, // 15MB limit
+});
 
 // Helper to parse cookies from header
 function parseCookies(cookieHeader?: string): Record<string, string> {
@@ -446,7 +474,7 @@ export async function createApp() {
 
         if (appRes.rowCount === 0) return null;
 
-        const [approvalsRes, timelineRes] = await Promise.all([
+        const [approvalsRes, timelineRes, attachmentsRes] = await Promise.all([
           client.query(
             `SELECT * FROM public.application_approvals WHERE application_id = $1 ORDER BY step_order ASC`,
             [req.params.id]
@@ -455,12 +483,21 @@ export async function createApp() {
             `SELECT * FROM public.application_timeline_events WHERE application_id = $1 ORDER BY created_at ASC`,
             [req.params.id]
           ),
+          client.query(
+            `SELECT att.*, u.full_name AS uploader_name
+             FROM public.application_attachments att
+             JOIN public.users u ON att.uploader_id = u.id
+             WHERE att.application_id = $1
+             ORDER BY att.created_at ASC`,
+            [req.params.id]
+          ),
         ]);
 
         return {
           ...appRes.rows[0],
           approvals: approvalsRes.rows,
           timeline: timelineRes.rows,
+          attachments: attachmentsRes.rows,
         };
       });
 
@@ -473,7 +510,7 @@ export async function createApp() {
     }
   });
 
-  // Submit or save a draft for ANY of the 14 forms
+  // Submit or save a draft for ANY of the 18 forms
   app.post('/api/applications', requireAuth, async (req: Request, res: Response) => {
     try {
       const {
@@ -502,6 +539,115 @@ export async function createApp() {
       });
 
       res.status(201).json(created);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // Update a draft or revision-requested application (and optionally submit)
+  app.put('/api/applications/:id', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const {
+        payload,
+        submitImmediately = false,
+        termsAccepted,
+        digitalSignature,
+      } = req.body;
+
+      if (!payload || typeof payload !== 'object') {
+        return res.status(400).json({ error: 'payload object is required.' });
+      }
+
+      const updated = await updateApplication({
+        entraOid: req.entraOid!,
+        applicationId: req.params.id,
+        payload,
+        submitImmediately: Boolean(submitImmediately),
+        termsAccepted,
+        digitalSignature,
+      });
+
+      res.json(updated);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // Upload attachment / supporting document for an application
+  app.post('/api/applications/:id/attachments', requireAuth, upload.single('file'), async (req: Request, res: Response) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ error: 'No file uploaded.' });
+      }
+
+      const attachment = await addApplicationAttachment(req.entraOid!, req.params.id, {
+        fileName: req.file.originalname,
+        fileSizeBytes: req.file.size,
+        mimeType: req.file.mimetype,
+        storagePath: req.file.path,
+      });
+
+      res.status(201).json(attachment);
+    } catch (err: any) {
+      if (req.file?.path && fs.existsSync(req.file.path)) {
+        try {
+          fs.unlinkSync(req.file.path);
+        } catch {}
+      }
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // Get attachments for an application
+  app.get('/api/applications/:id/attachments', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const attachments = await getApplicationAttachments(req.entraOid!, req.params.id);
+      res.json(attachments);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // Securely download / stream an attachment
+  app.get('/api/attachments/:id/download', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const attRes = await withRlsContext(req.entraOid!, async (client) => {
+        const query = `
+          SELECT att.* 
+          FROM public.application_attachments att
+          JOIN public.applications a ON att.application_id = a.id
+          WHERE att.id = $1
+        `;
+        const r = await client.query(query, [req.params.id]);
+        return r.rows[0];
+      });
+
+      if (!attRes) {
+        return res.status(404).json({ error: 'Attachment not found or access denied.' });
+      }
+
+      if (!fs.existsSync(attRes.storage_path)) {
+        return res.status(404).json({ error: 'Physical file not found on server.' });
+      }
+
+      res.setHeader('Content-Type', attRes.mime_type || 'application/octet-stream');
+      res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(attRes.file_name)}"`);
+      fs.createReadStream(attRes.storage_path).pipe(res);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // Delete an attachment
+  app.delete('/api/attachments/:id', requireAuth, async (req: Request, res: Response) => {
+    try {
+      const result = await deleteApplicationAttachment(req.entraOid!, req.params.id);
+      if (result.storagePath && fs.existsSync(result.storagePath)) {
+        try {
+          fs.unlinkSync(result.storagePath);
+        } catch {}
+      }
+      res.json({ success: true, message: 'Attachment deleted.' });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }

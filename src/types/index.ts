@@ -623,6 +623,26 @@ export interface TimelineEvent {
   created_at: string;
 }
 
+export interface ApplicationAttachment {
+  id: string;
+  application_id: string;
+  uploader_id: string;
+  uploader_name?: string;
+  file_name: string;
+  file_size_bytes: number;
+  mime_type: string;
+  storage_path: string;
+  created_at: string;
+}
+
+export interface UpdateFormInput<K extends FormCode = FormCode> {
+  applicationId: string;
+  payload: FormPayloadMap[K];
+  submitImmediately?: boolean;
+  termsAccepted?: boolean;
+  digitalSignature?: string;
+}
+
 export interface WorkflowApplication<K extends FormCode = FormCode> {
   id: string;
   reference_number: string;
@@ -649,6 +669,7 @@ export interface WorkflowApplication<K extends FormCode = FormCode> {
   payload: FormPayloadMap[K];
   approvals: ApplicationApprovalStep[];
   timeline?: TimelineEvent[];
+  attachments?: ApplicationAttachment[];
   created_at: string;
   updated_at: string;
 }

@@ -1,5 +1,6 @@
 import React from 'react';
 import { Check, Clock, X, AlertTriangle, Circle } from 'lucide-react';
+import { motion } from 'motion/react';
 import {
   ApplicationApprovalStep,
   LifecycleStatus,
@@ -160,14 +161,16 @@ export const StepperProgress: React.FC<StepperProgressProps> = ({
       <div className="flex items-center gap-2">
         <div className="flex items-center gap-1">
           {nodes.map((node) => (
-            <div
+            <motion.div
               key={node.key}
               title={`${node.label}: ${node.state.toLowerCase()}`}
+              animate={node.state === 'CURRENT' ? { opacity: [0.7, 1, 0.7] } : undefined}
+              transition={node.state === 'CURRENT' ? { duration: 1.8, repeat: Infinity, ease: 'easeInOut' } : undefined}
               className={`h-2 rounded-full transition-all ${
                 node.state === 'COMPLETED'
                   ? 'w-4 bg-emerald-500'
                   : node.state === 'CURRENT'
-                  ? 'w-5 bg-amber-500 animate-pulse'
+                  ? 'w-5 bg-blue-600'
                   : node.state === 'REJECTED'
                   ? 'w-4 bg-rose-500'
                   : node.state === 'REVISION'
@@ -202,20 +205,26 @@ export const StepperProgress: React.FC<StepperProgressProps> = ({
             >
               {/* Horizontal connecting track running between node centers */}
               {!isLast && (
-                <div
-                  className={`absolute top-3.5 left-1/2 w-full h-0.5 z-0 transition-colors ${
-                    isCompleted ? 'bg-emerald-500' : 'bg-slate-200'
-                  }`}
-                />
+                <div className="absolute top-3.5 left-1/2 w-full h-0.5 z-0 bg-slate-200 overflow-hidden">
+                  <motion.div
+                    initial={{ scaleX: 0 }}
+                    animate={{ scaleX: isCompleted ? 1 : 0 }}
+                    transition={{ duration: 0.35, ease: 'easeOut' }}
+                    style={{ originX: 0 }}
+                    className="w-full h-full bg-emerald-500"
+                  />
+                </div>
               )}
 
               {/* Node milestone circle */}
-              <div
+              <motion.div
+                whileHover={{ scale: 1.1 }}
+                whileTap={{ scale: 0.95 }}
                 className={`relative z-10 w-7 h-7 rounded-full flex items-center justify-center transition-all shadow-2xs ring-4 ring-white ${
                   isCompleted
                     ? 'bg-emerald-600 text-white'
                     : isCurrent
-                    ? 'bg-amber-500 text-white ring-amber-100 animate-pulse'
+                    ? 'bg-blue-600 text-white ring-blue-100 ring-4'
                     : isRejected
                     ? 'bg-rose-600 text-white'
                     : isRevision
@@ -224,6 +233,9 @@ export const StepperProgress: React.FC<StepperProgressProps> = ({
                 }`}
                 title={`${node.label} (${node.state.replace(/_/g, ' ')})`}
               >
+                {isCurrent && (
+                  <span className="absolute inset-0 rounded-full bg-blue-500/20 animate-ping -z-10" />
+                )}
                 {isCompleted ? (
                   <Check className="w-4 h-4 stroke-[3]" />
                 ) : isCurrent ? (
@@ -237,7 +249,7 @@ export const StepperProgress: React.FC<StepperProgressProps> = ({
                     {index + 1}
                   </span>
                 )}
-              </div>
+              </motion.div>
 
               {/* Label & Subtitle Stacked cleanly underneath */}
               <div className="mt-2 w-full px-0.5">
