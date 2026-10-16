@@ -6,15 +6,18 @@ import {
   CheckCircle2,
   Clock,
   XCircle,
-  Filter,
   Eye,
   Plus,
   ChevronLeft,
   ChevronRight,
-  MoreHorizontal,
   ArrowUpDown,
   FileText,
-  SlidersHorizontal,
+  X,
+  RotateCcw,
+  CheckSquare,
+  Building2,
+  ShieldCheck,
+  Lock,
 } from 'lucide-react';
 import { useAppContext } from '../../context/AppContext';
 import {
@@ -22,94 +25,184 @@ import {
   DepartmentCode,
   LifecycleStatus,
   FormCode,
+  ROLE_LABELS,
+  isUserInvolvedInApplication,
+  isAwaitingUserSignOff,
 } from '../../types';
 import { ApplicationDetailDrawer } from '../ApplicationDetailDrawer';
 import { StepperProgress } from '../common/StepperProgress';
+import { StatusBadge } from '../common/StatusBadge';
 import { NewRequestStepper } from '../ApplicantView/NewRequestStepper';
+import { useToast } from '../common/Toast';
 
 interface MasterSheetViewProps {
   mode?: 'REVIEW_QUEUE' | 'MASTER_SHEET';
 }
 
+type SortField = 'reference' | 'title' | 'applicant' | 'date' | 'status';
+type SortOrder = 'asc' | 'desc';
+
 export const MasterSheetView: React.FC<MasterSheetViewProps> = ({
   mode = 'MASTER_SHEET',
 }) => {
-  const { currentUser, applications, formDefinitions, institutions } =
-    useAppContext();
+  const { currentUser, applications, formDefinitions, sites } = useAppContext();
+  const { showToast } = useToast();
 
   const [awaitingMyRoleOnly, setAwaitingMyRoleOnly] = useState<boolean>(
     mode === 'REVIEW_QUEUE'
   );
   const [deptFilter, setDeptFilter] = useState<DepartmentCode | 'ALL'>('ALL');
   const [formFilter, setFormFilter] = useState<FormCode | 'ALL'>('ALL');
-  const [schoolFilter, setSchoolFilter] = useState<string>('ALL');
-  const [statusFilter, setStatusFilter] = useState<LifecycleStatus | 'ALL'>(
-    'ALL'
-  );
+  const [siteFilter, setSiteFilter] = useState<string>('ALL');
+  const [statusFilter, setStatusFilter] = useState<LifecycleStatus | 'ALL'>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedApp, setSelectedApp] = useState<WorkflowApplication | null>(
-    null
-  );
+  const [selectedApp, setSelectedApp] = useState<WorkflowApplication | null>(null);
   const [showNewModal, setShowNewModal] = useState(false);
 
-  // Pagination state (Matches 1.png)
+  // Sorting state
+  const [sortField, setSortField] = useState<SortField>('date');
+  const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
+
+  // Pagination state
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
 
-  // Row selection checkboxes (Matches 1.png)
+  // Row selection checkboxes
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+  const isCentralUser = currentUser?.site_code === 'CENTRAL';
 
   // Sync tab default when switching between Review Queue and Master Sheet in Sidebar
   React.useEffect(() => {
     setAwaitingMyRoleOnly(mode === 'REVIEW_QUEUE');
+    setStatusFilter('ALL');
     setCurrentPage(1);
+    setSelectedIds(new Set());
   }, [mode]);
 
+  // 1. Strict Least-Privilege & Site-Bound Baseline:
+  //    Users ONLY see applications that directly involve them and respect their Site boundary.
+  const involvedApplications = useMemo(() => {
+    if (!currentUser) return [];
+    return applications.filter((app) =>
+      isUserInvolvedInApplication(app, currentUser)
+    );
+  }, [applications, currentUser]);
+
+  // 2. Role-Scoped Forms & Departments (Hick's Law + Least Privilege):
+  //    Only show forms in the filter dropdown where this user's role is actually in the pipeline
+  //    (or where they have an involved application, or all forms for Central SUPER_ADMIN).
+  const permittedForms = useMemo(() => {
+    if (!currentUser) return [];
+    if (currentUser.role === 'SUPER_ADMIN' && isCentralUser) {
+      return formDefinitions;
+    }
+    return formDefinitions.filter(
+      (f) =>
+        f.workflow_pipeline.some((step) => step.role === currentUser.role) ||
+        involvedApplications.some((app) => app.form_code === f.code)
+    );
+  }, [formDefinitions, currentUser, isCentralUser, involvedApplications]);
+
+  const permittedDepartments = useMemo(() => {
+    const set = new Set<DepartmentCode>(permittedForms.map((f) => f.department));
+    return Array.from(set);
+  }, [permittedForms]);
+
+  const hasActiveFilters =
+    deptFilter !== 'ALL' ||
+    formFilter !== 'ALL' ||
+    (isCentralUser && siteFilter !== 'ALL') ||
+    statusFilter !== 'ALL' ||
+    searchQuery.trim().length > 0;
+
+  const resetFilters = () => {
+    setDeptFilter('ALL');
+    setFormFilter('ALL');
+    setSiteFilter('ALL');
+    setStatusFilter('ALL');
+    setSearchQuery('');
+    setCurrentPage(1);
+  };
+
+  const handleSort = (field: SortField) => {
+    if (sortField === field) {
+      setSortOrder((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortField(field);
+      setSortOrder('asc');
+    }
+  };
+
   const filteredApps = useMemo(() => {
-    return applications.filter((app) => {
-      if (awaitingMyRoleOnly) {
-        if (app.status !== 'IN_REVIEW') return false;
-        if (
-          currentUser?.role !== 'SUPER_ADMIN' &&
-          app.current_approver_role !== currentUser?.role
-        ) {
-          return false;
-        }
-        if (
-          currentUser &&
-          ['HEAD_TEACHER', 'LINE_MANAGER'].includes(currentUser.role) &&
-          app.institution_id !== currentUser.institution_id
-        ) {
-          return false;
-        }
+    const list = involvedApplications.filter((app) => {
+      if (awaitingMyRoleOnly && !isAwaitingUserSignOff(app, currentUser)) {
+        return false;
+      }
+
+      // Non-central users are strictly locked to their assigned site
+      if (!isCentralUser && currentUser && app.site_id !== currentUser.site_id) {
+        return false;
       }
 
       if (deptFilter !== 'ALL' && app.department !== deptFilter) return false;
       if (formFilter !== 'ALL' && app.form_code !== formFilter) return false;
-      if (schoolFilter !== 'ALL' && app.institution_id !== schoolFilter)
+      if (isCentralUser && siteFilter !== 'ALL' && app.site_id !== siteFilter) {
         return false;
+      }
       if (statusFilter !== 'ALL' && app.status !== statusFilter) return false;
 
       if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase();
+        const q = searchQuery.toLowerCase().trim();
         const matchRef = app.reference_number.toLowerCase().includes(q);
         const matchName = app.applicant_name.toLowerCase().includes(q);
         const matchEmp = app.applicant_employee_number.toLowerCase().includes(q);
         const matchTitle = app.form_title.toLowerCase().includes(q);
-        if (!matchRef && !matchName && !matchEmp && !matchTitle) return false;
+        const matchSite = app.site_name.toLowerCase().includes(q);
+        if (!matchRef && !matchName && !matchEmp && !matchTitle && !matchSite) {
+          return false;
+        }
       }
 
       return true;
     });
+
+    return list.sort((a, b) => {
+      // In Sign-off Queue or Ledger, prioritize items awaiting user's immediate sign-off when sorting by date
+      let comparison = 0;
+      switch (sortField) {
+        case 'reference':
+          comparison = a.reference_number.localeCompare(b.reference_number);
+          break;
+        case 'title':
+          comparison = a.form_title.localeCompare(b.form_title);
+          break;
+        case 'applicant':
+          comparison = a.applicant_name.localeCompare(b.applicant_name);
+          break;
+        case 'status':
+          comparison = a.status.localeCompare(b.status);
+          break;
+        case 'date':
+        default:
+          comparison =
+            new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+          break;
+      }
+      return sortOrder === 'asc' ? comparison : -comparison;
+    });
   }, [
-    applications,
+    involvedApplications,
     awaitingMyRoleOnly,
     currentUser,
+    isCentralUser,
     deptFilter,
     formFilter,
-    schoolFilter,
+    siteFilter,
     statusFilter,
     searchQuery,
+    sortField,
+    sortOrder,
   ]);
 
   // Paginated applications slice
@@ -119,25 +212,26 @@ export const MasterSheetView: React.FC<MasterSheetViewProps> = ({
     return filteredApps.slice(start, start + pageSize);
   }, [filteredApps, currentPage, pageSize]);
 
-  // Quick KPI metrics for the current view
+  // Strict Involved KPI metrics
   const metrics = useMemo(() => {
-    const myInboxCount = applications.filter(
-      (a) =>
-        a.status === 'IN_REVIEW' &&
-        (currentUser?.role === 'SUPER_ADMIN' ||
-          a.current_approver_role === currentUser?.role)
+    const myInboxCount = involvedApplications.filter((a) =>
+      isAwaitingUserSignOff(a, currentUser)
     ).length;
 
     return {
       myInboxCount,
-      totalInReview: applications.filter((a) => a.status === 'IN_REVIEW').length,
-      totalApproved: applications.filter((a) => a.status === 'APPROVED').length,
-      totalRejected: applications.filter((a) => a.status === 'REJECTED').length,
+      totalInvolved: involvedApplications.length,
+      totalInReview: involvedApplications.filter((a) => a.status === 'IN_REVIEW')
+        .length,
+      totalApproved: involvedApplications.filter((a) => a.status === 'APPROVED')
+        .length,
+      totalRejected: involvedApplications.filter((a) => a.status === 'REJECTED')
+        .length,
     };
-  }, [applications, currentUser]);
+  }, [involvedApplications, currentUser]);
 
   const toggleSelectAll = () => {
-    if (selectedIds.size === paginatedApps.length) {
+    if (selectedIds.size === paginatedApps.length && paginatedApps.length > 0) {
       setSelectedIds(new Set());
     } else {
       setSelectedIds(new Set(paginatedApps.map((a) => a.id)));
@@ -154,8 +248,12 @@ export const MasterSheetView: React.FC<MasterSheetViewProps> = ({
     });
   };
 
-  const exportToCsv = () => {
-    if (filteredApps.length === 0) return;
+  const exportSelectedOrAllToCsv = (onlySelected: boolean = false) => {
+    const targetApps = onlySelected
+      ? involvedApplications.filter((a) => selectedIds.has(a.id))
+      : filteredApps;
+
+    if (targetApps.length === 0) return;
 
     const headers = [
       'Reference',
@@ -163,20 +261,20 @@ export const MasterSheetView: React.FC<MasterSheetViewProps> = ({
       'Form Title',
       'Applicant Name',
       'Employee #',
-      'Institution',
+      'Site',
       'Status',
       'Current Step Role',
       'Submitted Date',
       'Payload Summary (JSON)',
     ];
 
-    const rows = filteredApps.map((a) => [
+    const rows = targetApps.map((a) => [
       a.reference_number,
       a.department,
       `"${a.form_title.replace(/"/g, '""')}"`,
       `"${a.applicant_name.replace(/"/g, '""')}"`,
       a.applicant_employee_number,
-      `"${a.institution_name.replace(/"/g, '""')}"`,
+      `"${a.site_name.replace(/"/g, '""')}"`,
       a.status,
       a.current_approver_role || 'NONE',
       new Date(a.created_at).toISOString().split('T')[0],
@@ -192,16 +290,22 @@ export const MasterSheetView: React.FC<MasterSheetViewProps> = ({
     link.setAttribute('href', encodedUri);
     link.setAttribute(
       'download',
-      `educore_workflows_${new Date().toISOString().slice(0, 10)}.csv`
+      `educore_site_workflow_export_${new Date().toISOString().slice(0, 10)}.csv`
     );
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+
+    showToast(
+      'success',
+      'CSV Export Complete',
+      `Exported ${targetApps.length} involved application records.`
+    );
   };
 
   if (showNewModal) {
     return (
-      <div className="p-6">
+      <div className="p-4 sm:p-6 max-w-6xl mx-auto">
         <NewRequestStepper
           onSuccess={() => setShowNewModal(false)}
           onCancel={() => setShowNewModal(false)}
@@ -211,167 +315,340 @@ export const MasterSheetView: React.FC<MasterSheetViewProps> = ({
   }
 
   return (
-    <div className="p-6 max-w-7xl mx-auto space-y-5">
-      {/* Top Breadcrumb Bar (Matches 1.png) */}
-      <div className="flex items-center gap-2 text-xs text-slate-500 font-medium">
-        <span className="font-mono text-slate-400 font-bold">&lt;&gt;</span>
-        <span className="text-slate-700 font-semibold">
-          {awaitingMyRoleOnly ? 'Action Required Sign-off Queue' : 'Master Ledger & Workflow Management'}
-        </span>
-      </div>
-
-      {/* Main Header & Actions (Matches 1.png 'Product Listing' bar) */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">
-            {awaitingMyRoleOnly
-              ? 'Sign-off Queue'
-              : 'Workflow Master Ledger'}
-          </h1>
-          <p className="text-xs text-slate-500 mt-1">
-            Manage your multi-department applications and approvals.{' '}
-            <span className="text-blue-600 font-semibold">
-              {filteredApps.length} applications total
+    <div className="p-4 sm:p-6 max-w-7xl mx-auto space-y-5">
+      {/* Executive Header & Least-Privilege Scope Banner */}
+      <div className="corporate-card rounded-xl p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+        <div className="space-y-1">
+          <div className="flex items-center gap-2.5 flex-wrap">
+            <h1 className="text-lg sm:text-xl font-bold text-slate-900 tracking-tight">
+              {awaitingMyRoleOnly
+                ? 'Action Required Sign-off Queue'
+                : 'Involved Workflow Ledger'}
+            </h1>
+            {currentUser && (
+              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md bg-slate-100 text-slate-800 text-[11px] font-semibold border border-slate-200">
+                <Building2 className="w-3 h-3 text-slate-500" />
+                <span>
+                  Site: {currentUser.site_name} ({currentUser.site_code || 'SITE'})
+                </span>
+              </span>
+            )}
+          </div>
+          <p className="text-xs text-slate-500 flex items-center gap-1.5">
+            <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+            <span>
+              Least-Privilege Access: Displaying strictly the{' '}
+              <strong className="text-slate-800 tabular-nums">
+                {involvedApplications.length}
+              </strong>{' '}
+              application(s) involving{' '}
+              <strong className="text-slate-800">
+                {currentUser ? ROLE_LABELS[currentUser.role] : 'your role'}
+              </strong>{' '}
+              {isCentralUser
+                ? 'across authorized Central pipeline steps.'
+                : `bound to ${currentUser?.site_name}.`}
             </span>
           </p>
         </div>
 
-        <div className="flex items-center gap-2.5">
-          <button
-            type="button"
-            onClick={() => {
-              setAwaitingMyRoleOnly(true);
-              setCurrentPage(1);
-            }}
-            className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold transition cursor-pointer ${
-              awaitingMyRoleOnly
-                ? 'bg-blue-600 text-white shadow-xs'
-                : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
-            }`}
-          >
-            <Inbox className="w-4 h-4" />
-            My Sign-offs ({metrics.myInboxCount})
-          </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="inline-flex p-1 rounded-lg bg-slate-100 border border-slate-200/80">
+            <button
+              type="button"
+              onClick={() => {
+                setAwaitingMyRoleOnly(true);
+                setCurrentPage(1);
+              }}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition cursor-pointer ${
+                awaitingMyRoleOnly
+                  ? 'bg-white text-slate-900 shadow-2xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Inbox className="w-3.5 h-3.5 text-amber-600" />
+              <span>My Sign-offs ({metrics.myInboxCount})</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setAwaitingMyRoleOnly(false);
+                setCurrentPage(1);
+              }}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition cursor-pointer ${
+                !awaitingMyRoleOnly
+                  ? 'bg-white text-slate-900 shadow-2xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <span>All Involved ({metrics.totalInvolved})</span>
+            </button>
+          </div>
 
           <button
             type="button"
-            onClick={() => {
-              setAwaitingMyRoleOnly(false);
-              setCurrentPage(1);
-            }}
-            className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold transition cursor-pointer ${
-              !awaitingMyRoleOnly
-                ? 'bg-slate-900 text-white shadow-xs'
-                : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
-            }`}
-          >
-            All Records ({applications.length})
-          </button>
-
-          <button
-            type="button"
-            onClick={exportToCsv}
+            onClick={() => exportSelectedOrAllToCsv(false)}
             disabled={filteredApps.length === 0}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-slate-200 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-40 transition cursor-pointer"
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-slate-200 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-40 transition cursor-pointer shadow-2xs"
           >
-            <Download className="w-3.5 h-3.5" /> Export CSV
+            <Download className="w-3.5 h-3.5" />
+            <span>Export CSV</span>
           </button>
 
           <button
             type="button"
             onClick={() => setShowNewModal(true)}
-            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold shadow-xs transition cursor-pointer"
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold shadow-2xs transition cursor-pointer"
           >
-            <Plus className="w-4 h-4" /> Add Application
+            <Plus className="w-3.5 h-3.5 text-sky-400" />
+            <span>New Application</span>
           </button>
         </div>
       </div>
 
-      {/* KPI Stat Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3.5">
-        <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-2xs flex items-center justify-between">
+      {/* Interactive KPI Filter Cards (Fitts's Law & Jakob's Law) */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
+        <button
+          type="button"
+          onClick={() => {
+            setAwaitingMyRoleOnly(true);
+            setStatusFilter('ALL');
+            setCurrentPage(1);
+          }}
+          className={`text-left p-4 rounded-xl border transition cursor-pointer flex items-center justify-between ${
+            awaitingMyRoleOnly
+              ? 'bg-slate-900 text-white border-slate-900 shadow-xs'
+              : 'bg-white text-slate-900 border-slate-200/90 hover:border-slate-300 shadow-2xs'
+          }`}
+        >
           <div>
-            <span className="text-xs text-slate-500 font-medium">My Pending Sign-offs</span>
-            <p className="text-2xl font-bold text-blue-600 mt-1">{metrics.myInboxCount}</p>
+            <span
+              className={`text-xs font-medium ${
+                awaitingMyRoleOnly ? 'text-slate-300' : 'text-slate-500'
+              }`}
+            >
+              Awaiting My Sign-off
+            </span>
+            <p
+              className={`text-2xl font-bold tabular-nums mt-1 ${
+                awaitingMyRoleOnly ? 'text-amber-400' : 'text-slate-900'
+              }`}
+            >
+              {metrics.myInboxCount}
+            </p>
           </div>
-          <div className="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center text-blue-600">
+          <div
+            className={`w-10 h-10 rounded-lg flex items-center justify-center ${
+              awaitingMyRoleOnly
+                ? 'bg-slate-800 text-amber-400'
+                : 'bg-amber-50 text-amber-600'
+            }`}
+          >
             <Inbox className="w-5 h-5" />
           </div>
-        </div>
+        </button>
 
-        <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-2xs flex items-center justify-between">
+        <button
+          type="button"
+          onClick={() => {
+            setAwaitingMyRoleOnly(false);
+            setStatusFilter(statusFilter === 'IN_REVIEW' ? 'ALL' : 'IN_REVIEW');
+            setCurrentPage(1);
+          }}
+          className={`text-left p-4 rounded-xl border transition cursor-pointer flex items-center justify-between ${
+            !awaitingMyRoleOnly && statusFilter === 'IN_REVIEW'
+              ? 'bg-amber-600 text-white border-amber-600 shadow-xs'
+              : 'bg-white text-slate-900 border-slate-200/90 hover:border-amber-300 shadow-2xs'
+          }`}
+        >
           <div>
-            <span className="text-xs text-slate-500 font-medium">Total In Review</span>
-            <p className="text-2xl font-bold text-amber-600 mt-1">{metrics.totalInReview}</p>
+            <span
+              className={`text-xs font-medium ${
+                !awaitingMyRoleOnly && statusFilter === 'IN_REVIEW'
+                  ? 'text-amber-100'
+                  : 'text-slate-500'
+              }`}
+            >
+              Involved In Review
+            </span>
+            <p
+              className={`text-2xl font-bold tabular-nums mt-1 ${
+                !awaitingMyRoleOnly && statusFilter === 'IN_REVIEW'
+                  ? 'text-white'
+                  : 'text-amber-600'
+              }`}
+            >
+              {metrics.totalInReview}
+            </p>
           </div>
-          <div className="w-10 h-10 rounded-xl bg-amber-50 flex items-center justify-center text-amber-600">
+          <div
+            className={`w-10 h-10 rounded-lg flex items-center justify-center ${
+              !awaitingMyRoleOnly && statusFilter === 'IN_REVIEW'
+                ? 'bg-amber-700 text-white'
+                : 'bg-amber-50 text-amber-600'
+            }`}
+          >
             <Clock className="w-5 h-5" />
           </div>
-        </div>
+        </button>
 
-        <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-2xs flex items-center justify-between">
+        <button
+          type="button"
+          onClick={() => {
+            setAwaitingMyRoleOnly(false);
+            setStatusFilter(statusFilter === 'APPROVED' ? 'ALL' : 'APPROVED');
+            setCurrentPage(1);
+          }}
+          className={`text-left p-4 rounded-xl border transition cursor-pointer flex items-center justify-between ${
+            !awaitingMyRoleOnly && statusFilter === 'APPROVED'
+              ? 'bg-emerald-600 text-white border-emerald-600 shadow-xs'
+              : 'bg-white text-slate-900 border-slate-200/90 hover:border-emerald-300 shadow-2xs'
+          }`}
+        >
           <div>
-            <span className="text-xs text-slate-500 font-medium">Total Approved</span>
-            <p className="text-2xl font-bold text-emerald-600 mt-1">{metrics.totalApproved}</p>
+            <span
+              className={`text-xs font-medium ${
+                !awaitingMyRoleOnly && statusFilter === 'APPROVED'
+                  ? 'text-emerald-100'
+                  : 'text-slate-500'
+              }`}
+            >
+              Involved Approved
+            </span>
+            <p
+              className={`text-2xl font-bold tabular-nums mt-1 ${
+                !awaitingMyRoleOnly && statusFilter === 'APPROVED'
+                  ? 'text-white'
+                  : 'text-emerald-600'
+              }`}
+            >
+              {metrics.totalApproved}
+            </p>
           </div>
-          <div className="w-10 h-10 rounded-xl bg-emerald-50 flex items-center justify-center text-emerald-600">
+          <div
+            className={`w-10 h-10 rounded-lg flex items-center justify-center ${
+              !awaitingMyRoleOnly && statusFilter === 'APPROVED'
+                ? 'bg-emerald-700 text-white'
+                : 'bg-emerald-50 text-emerald-600'
+            }`}
+          >
             <CheckCircle2 className="w-5 h-5" />
           </div>
-        </div>
+        </button>
 
-        <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-2xs flex items-center justify-between">
+        <button
+          type="button"
+          onClick={() => {
+            setAwaitingMyRoleOnly(false);
+            setStatusFilter(statusFilter === 'REJECTED' ? 'ALL' : 'REJECTED');
+            setCurrentPage(1);
+          }}
+          className={`text-left p-4 rounded-xl border transition cursor-pointer flex items-center justify-between ${
+            !awaitingMyRoleOnly && statusFilter === 'REJECTED'
+              ? 'bg-rose-600 text-white border-rose-600 shadow-xs'
+              : 'bg-white text-slate-900 border-slate-200/90 hover:border-rose-300 shadow-2xs'
+          }`}
+        >
           <div>
-            <span className="text-xs text-slate-500 font-medium">Total Rejected</span>
-            <p className="text-2xl font-bold text-rose-600 mt-1">{metrics.totalRejected}</p>
+            <span
+              className={`text-xs font-medium ${
+                !awaitingMyRoleOnly && statusFilter === 'REJECTED'
+                  ? 'text-rose-100'
+                  : 'text-slate-500'
+              }`}
+            >
+              Involved Rejected
+            </span>
+            <p
+              className={`text-2xl font-bold tabular-nums mt-1 ${
+                !awaitingMyRoleOnly && statusFilter === 'REJECTED'
+                  ? 'text-white'
+                  : 'text-rose-600'
+              }`}
+            >
+              {metrics.totalRejected}
+            </p>
           </div>
-          <div className="w-10 h-10 rounded-xl bg-rose-50 flex items-center justify-center text-rose-600">
+          <div
+            className={`w-10 h-10 rounded-lg flex items-center justify-center ${
+              !awaitingMyRoleOnly && statusFilter === 'REJECTED'
+                ? 'bg-rose-700 text-white'
+                : 'bg-rose-50 text-rose-600'
+            }`}
+          >
             <XCircle className="w-5 h-5" />
           </div>
-        </div>
+        </button>
       </div>
 
-      {/* Unified Filter & Search Bar (Matches 1.png) */}
-      <div className="bg-white p-2.5 rounded-2xl border border-slate-200/80 shadow-2xs flex flex-wrap items-center gap-2.5">
+      {/* Unified Filter & Search Bar (Scoped to Role & Site) */}
+      <div className="corporate-card p-3 rounded-xl flex flex-wrap items-center gap-2.5">
         <div className="relative flex-1 min-w-[220px]">
-          <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+          <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
           <input
             type="text"
-            placeholder="Search by reference, staff name, employee #..."
+            aria-label="Search involved applications"
+            placeholder="Search by reference, applicant name, employee #, or site..."
             value={searchQuery}
             onChange={(e) => {
               setSearchQuery(e.target.value);
               setCurrentPage(1);
             }}
-            className="w-full pl-9 pr-3 py-2 border border-slate-200 rounded-xl text-xs bg-slate-50/50 hover:bg-white focus:bg-white focus:border-blue-500 focus:outline-hidden transition"
+            className="w-full pl-9 pr-8 py-2 border border-slate-200 rounded-lg text-xs bg-slate-50/70 hover:bg-white focus:bg-white focus:border-sky-600 focus:outline-hidden transition"
           />
+          {searchQuery && (
+            <button
+              type="button"
+              onClick={() => setSearchQuery('')}
+              aria-label="Clear search query"
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
         </div>
 
+        {/* Department Filter (Only shows departments involving this role) */}
         <select
+          aria-label="Filter by department"
           value={deptFilter}
           onChange={(e) => {
             setDeptFilter(e.target.value as DepartmentCode | 'ALL');
             setFormFilter('ALL');
             setCurrentPage(1);
           }}
-          className="border border-slate-200 bg-white hover:bg-slate-50 rounded-xl px-3 py-2 text-xs font-medium text-slate-700 cursor-pointer"
+          className="border border-slate-200 bg-white hover:bg-slate-50 rounded-lg px-3 py-2 text-xs font-medium text-slate-700 cursor-pointer"
         >
-          <option value="ALL">Category: All Departments</option>
-          <option value="IT">IT Department</option>
-          <option value="HR">HR Department</option>
-          <option value="FINANCE">Finance & Stores</option>
-          <option value="LOGISTICS">Logistics</option>
+          <option value="ALL">
+            Department: All Involved ({permittedDepartments.length})
+          </option>
+          {permittedDepartments.includes('IT') && (
+            <option value="IT">ICT Infrastructure</option>
+          )}
+          {permittedDepartments.includes('HR') && (
+            <option value="HR">Human Resources</option>
+          )}
+          {permittedDepartments.includes('FINANCE') && (
+            <option value="FINANCE">Finance &amp; Stores</option>
+          )}
+          {permittedDepartments.includes('LOGISTICS') && (
+            <option value="LOGISTICS">Logistics &amp; Fleet</option>
+          )}
         </select>
 
+        {/* Form Filter (Only shows forms involving this role) */}
         <select
+          aria-label="Filter by form"
           value={formFilter}
           onChange={(e) => {
             setFormFilter(e.target.value as FormCode | 'ALL');
             setCurrentPage(1);
           }}
-          className="border border-slate-200 bg-white hover:bg-slate-50 rounded-xl px-3 py-2 text-xs font-medium text-slate-700 cursor-pointer max-w-[180px] truncate"
+          className="border border-slate-200 bg-white hover:bg-slate-50 rounded-lg px-3 py-2 text-xs font-medium text-slate-700 cursor-pointer max-w-[200px] truncate"
         >
-          <option value="ALL">Form: All Forms</option>
-          {formDefinitions
+          <option value="ALL">Form: All Involved ({permittedForms.length})</option>
+          {permittedForms
             .filter((f) => deptFilter === 'ALL' || f.department === deptFilter)
             .map((f) => (
               <option key={f.code} value={f.code}>
@@ -380,31 +657,46 @@ export const MasterSheetView: React.FC<MasterSheetViewProps> = ({
             ))}
         </select>
 
-        <select
-          value={schoolFilter}
-          onChange={(e) => {
-            setSchoolFilter(e.target.value);
-            setCurrentPage(1);
-          }}
-          className="border border-slate-200 bg-white hover:bg-slate-50 rounded-xl px-3 py-2 text-xs font-medium text-slate-700 cursor-pointer max-w-[180px] truncate"
-        >
-          <option value="ALL">School: All Institutions</option>
-          {institutions.map((inst) => (
-            <option key={inst.id} value={inst.id}>
-              {inst.name}
-            </option>
-          ))}
-        </select>
+        {/* Site Filter: Locked for Site-Bound Roles, Selectable for Central Roles */}
+        {isCentralUser ? (
+          <select
+            aria-label="Filter by site"
+            value={siteFilter}
+            onChange={(e) => {
+              setSiteFilter(e.target.value);
+              setCurrentPage(1);
+            }}
+            className="border border-slate-200 bg-white hover:bg-slate-50 rounded-lg px-3 py-2 text-xs font-medium text-slate-700 cursor-pointer max-w-[190px] truncate"
+          >
+            <option value="ALL">Site: All Sites</option>
+            {sites.map((site) => (
+              <option key={site.id} value={site.id}>
+                {site.name} ({site.code})
+              </option>
+            ))}
+          </select>
+        ) : (
+          <div
+            className="inline-flex items-center gap-1.5 border border-slate-200 bg-slate-100 rounded-lg px-3 py-2 text-xs font-semibold text-slate-700"
+            title="Your role is strictly bound to your assigned site"
+          >
+            <Lock className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+            <span className="truncate max-w-[160px]">
+              Site: {currentUser?.site_code || currentUser?.site_name}
+            </span>
+          </div>
+        )}
 
         <select
+          aria-label="Filter by status"
           value={statusFilter}
           onChange={(e) => {
             setStatusFilter(e.target.value as LifecycleStatus | 'ALL');
             setCurrentPage(1);
           }}
-          className="border border-slate-200 bg-white hover:bg-slate-50 rounded-xl px-3 py-2 text-xs font-medium text-slate-700 cursor-pointer"
+          className="border border-slate-200 bg-white hover:bg-slate-50 rounded-lg px-3 py-2 text-xs font-medium text-slate-700 cursor-pointer"
         >
-          <option value="ALL">Status: All Statuses</option>
+          <option value="ALL">Status: All</option>
           <option value="IN_REVIEW">In Review</option>
           <option value="APPROVED">Approved</option>
           <option value="REVISION_REQUIRED">Revision Required</option>
@@ -412,45 +704,102 @@ export const MasterSheetView: React.FC<MasterSheetViewProps> = ({
           <option value="CLOSED">Closed / Withdrawn</option>
         </select>
 
-        {/* Total Badge Box (Matches 1.png 'Total Products 534') */}
-        <div className="flex items-center gap-2 border border-slate-200 rounded-xl px-3 py-1.5 bg-slate-50 text-xs font-medium text-slate-700 ml-auto shrink-0">
-          <span className="text-slate-500">Total Records:</span>
-          <span className="font-bold font-mono text-slate-900">{filteredApps.length}</span>
+        {hasActiveFilters && (
+          <button
+            type="button"
+            onClick={resetFilters}
+            className="flex items-center gap-1 px-2.5 py-2 rounded-lg text-xs font-semibold text-rose-700 hover:bg-rose-50 border border-rose-200 transition cursor-pointer"
+            title="Reset All Filters"
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+            <span>Reset</span>
+          </button>
+        )}
+
+        <div className="flex items-center gap-2 border border-slate-200 rounded-lg px-3 py-1.5 bg-slate-50 text-xs font-medium text-slate-700 ml-auto shrink-0">
+          <span className="text-slate-500">Showing:</span>
+          <span className="font-bold font-mono tabular-nums text-slate-900">
+            {filteredApps.length}
+          </span>
         </div>
       </div>
 
-      {/* Master Table Card (Matches 1.png) */}
-      <div className="bg-white rounded-2xl border border-slate-200/80 overflow-hidden shadow-2xs">
+      {/* Bulk Selection Action Bar */}
+      {selectedIds.size > 0 && (
+        <div className="bg-sky-50 border border-sky-200 rounded-xl p-3 flex items-center justify-between shadow-2xs">
+          <div className="flex items-center gap-2 text-xs text-sky-950 font-semibold">
+            <CheckSquare className="w-4 h-4 text-sky-600" />
+            <span>{selectedIds.size} application(s) selected</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => exportSelectedOrAllToCsv(true)}
+              className="px-3 py-1.5 rounded-lg bg-slate-900 text-white text-xs font-semibold hover:bg-slate-800 transition cursor-pointer"
+            >
+              Export Selected ({selectedIds.size})
+            </button>
+            <button
+              type="button"
+              onClick={() => setSelectedIds(new Set())}
+              className="px-3 py-1.5 rounded-lg border border-slate-300 bg-white text-slate-700 text-xs font-semibold hover:bg-slate-100 transition cursor-pointer"
+            >
+              Clear Selection
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Corporate Data Table */}
+      <div className="corporate-card rounded-xl overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
             <thead>
-              <tr className="bg-slate-50/80 border-b border-slate-200/80 text-[11px] font-semibold text-slate-500">
-                <th className="py-3 px-4 w-10">
+              <tr className="bg-slate-50 border-b border-slate-200/90 text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                <th className="py-3.5 px-4 w-10">
                   <input
                     type="checkbox"
+                    aria-label="Select all visible rows"
                     checked={
                       paginatedApps.length > 0 &&
                       selectedIds.size === paginatedApps.length
                     }
                     onChange={toggleSelectAll}
-                    className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                    className="rounded border-slate-300 text-sky-600 focus:ring-sky-500 cursor-pointer"
                   />
                 </th>
-                <th className="py-3.5 px-4">
+                <th
+                  className="py-3.5 px-4 cursor-pointer hover:text-slate-900 transition select-none"
+                  onClick={() => handleSort('reference')}
+                >
                   <div className="flex items-center gap-1.5">
-                    <span>Reference & Dept</span>
+                    <span>Reference &amp; Dept</span>
                     <ArrowUpDown className="w-3 h-3 text-slate-400" />
                   </div>
                 </th>
-                <th className="py-3.5 px-4">
+                <th
+                  className="py-3.5 px-4 cursor-pointer hover:text-slate-900 transition select-none"
+                  onClick={() => handleSort('title')}
+                >
                   <div className="flex items-center gap-1.5">
-                    <span>Form Title</span>
+                    <span>Form &amp; Submission</span>
                     <ArrowUpDown className="w-3 h-3 text-slate-400" />
                   </div>
                 </th>
-                <th className="py-3.5 px-4">Applicant & Institution</th>
+                <th
+                  className="py-3.5 px-4 cursor-pointer hover:text-slate-900 transition select-none"
+                  onClick={() => handleSort('applicant')}
+                >
+                  <div className="flex items-center gap-1.5">
+                    <span>Applicant &amp; Site</span>
+                    <ArrowUpDown className="w-3 h-3 text-slate-400" />
+                  </div>
+                </th>
                 <th className="py-3.5 px-4">Pipeline Progress</th>
-                <th className="py-3.5 px-4">
+                <th
+                  className="py-3.5 px-4 cursor-pointer hover:text-slate-900 transition select-none"
+                  onClick={() => handleSort('status')}
+                >
                   <div className="flex items-center gap-1.5">
                     <span>Status</span>
                     <ArrowUpDown className="w-3 h-3 text-slate-400" />
@@ -462,27 +811,59 @@ export const MasterSheetView: React.FC<MasterSheetViewProps> = ({
             <tbody className="divide-y divide-slate-100 text-xs">
               {paginatedApps.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-14 text-center text-slate-500">
-                    <p className="font-semibold text-slate-700">No applications found</p>
-                    <p className="text-xs text-slate-400 mt-1">
-                      Try clearing filters or search query above.
-                    </p>
+                  <td colSpan={7} className="py-16 text-center text-slate-500">
+                    <div className="max-w-sm mx-auto space-y-3">
+                      <div className="w-12 h-12 rounded-xl bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-500 mx-auto">
+                        <FileText className="w-6 h-6" />
+                      </div>
+                      <p className="font-bold text-slate-900 text-sm">
+                        {awaitingMyRoleOnly
+                          ? 'No sign-offs currently awaiting your action'
+                          : 'No involved applications match your filters'}
+                      </p>
+                      <p className="text-xs text-slate-500 leading-relaxed">
+                        {awaitingMyRoleOnly
+                          ? `You are all caught up! Switch to "All Involved (${metrics.totalInvolved})" to inspect historical or in-flight applications involving your role at your site.`
+                          : 'Try clearing your active search query or department filter.'}
+                      </p>
+                      <div className="flex items-center justify-center gap-2 pt-1">
+                        {awaitingMyRoleOnly && metrics.totalInvolved > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => setAwaitingMyRoleOnly(false)}
+                            className="px-3.5 py-2 rounded-lg bg-slate-900 text-white text-xs font-semibold hover:bg-slate-800 transition cursor-pointer"
+                          >
+                            View All Involved ({metrics.totalInvolved})
+                          </button>
+                        )}
+                        {hasActiveFilters && (
+                          <button
+                            type="button"
+                            onClick={resetFilters}
+                            className="px-3.5 py-2 rounded-lg bg-slate-100 text-slate-800 text-xs font-semibold hover:bg-slate-200 transition cursor-pointer"
+                          >
+                            Clear Filters
+                          </button>
+                        )}
+                      </div>
+                    </div>
                   </td>
                 </tr>
               ) : (
                 paginatedApps.map((app) => {
-                  const isMyTurn =
-                    app.status === 'IN_REVIEW' &&
-                    (currentUser?.role === 'SUPER_ADMIN' ||
-                      app.current_approver_role === currentUser?.role);
+                  const isMyTurn = isAwaitingUserSignOff(app, currentUser);
                   const isSelected = selectedIds.has(app.id);
 
                   return (
                     <tr
                       key={app.id}
                       onClick={() => setSelectedApp(app)}
-                      className={`hover:bg-slate-50/70 transition cursor-pointer ${
-                        isSelected ? 'bg-blue-50/40' : ''
+                      className={`transition cursor-pointer ${
+                        isSelected
+                          ? 'bg-sky-50/60'
+                          : isMyTurn
+                          ? 'bg-amber-50/35 hover:bg-amber-50/70'
+                          : 'hover:bg-slate-50/90'
                       }`}
                     >
                       <td
@@ -491,40 +872,53 @@ export const MasterSheetView: React.FC<MasterSheetViewProps> = ({
                       >
                         <input
                           type="checkbox"
+                          aria-label={`Select ${app.reference_number}`}
                           checked={isSelected}
                           onChange={() => {}}
-                          className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                          className="rounded border-slate-300 text-sky-600 focus:ring-sky-500 cursor-pointer"
                         />
                       </td>
 
                       <td className="py-3.5 px-4 whitespace-nowrap">
-                        <div className="font-mono font-bold text-blue-600">
-                          {app.reference_number}
+                        <div className="font-mono font-bold text-slate-900 flex items-center gap-1.5">
+                          <span>{app.reference_number}</span>
+                          {isMyTurn && (
+                            <span
+                              className="w-2 h-2 rounded-full bg-amber-500 shrink-0"
+                              title="Awaiting your sign-off"
+                            />
+                          )}
                         </div>
-                        <span className="inline-block mt-0.5 text-[10px] font-bold uppercase px-1.5 py-0.5 rounded-md bg-slate-100 text-slate-600">
+                        <span className="inline-block mt-1 text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 border border-slate-200">
                           {app.department}
                         </span>
                       </td>
 
                       <td className="py-3.5 px-4">
-                        <div className="font-semibold text-slate-900">
+                        <div className="font-bold text-slate-900 leading-snug">
                           {app.form_title}
                         </div>
-                        <div className="text-[11px] text-slate-400 mt-0.5">
+                        <div className="text-[11px] text-slate-500 mt-0.5 tabular-nums">
                           Submitted {new Date(app.created_at).toLocaleDateString()}
                         </div>
                       </td>
 
                       <td className="py-3.5 px-4">
-                        <div className="font-medium text-slate-800">
+                        <div className="font-semibold text-slate-900">
                           {app.applicant_name}
                         </div>
-                        <div className="text-[11px] text-slate-500">
-                          {app.applicant_employee_number} · {app.institution_name}
+                        <div className="text-[11px] text-slate-500 flex items-center gap-1.5 mt-0.5">
+                          <span className="font-mono">
+                            {app.applicant_employee_number}
+                          </span>
+                          <span className="text-slate-300">·</span>
+                          <span className="truncate max-w-[160px] font-medium text-slate-700">
+                            {app.site_name}
+                          </span>
                         </div>
                       </td>
 
-                      <td className="py-3.5 px-4 min-w-[240px]">
+                      <td className="py-3.5 px-4 min-w-[180px]">
                         <StepperProgress
                           approvals={app.approvals}
                           lifecycleStatus={app.status}
@@ -534,61 +928,37 @@ export const MasterSheetView: React.FC<MasterSheetViewProps> = ({
                       </td>
 
                       <td className="py-3.5 px-4 whitespace-nowrap">
-                        <span
-                          className={`px-3 py-1 rounded-full text-[11px] font-semibold border ${
-                            app.status === 'APPROVED'
-                              ? 'bg-emerald-50 text-emerald-700 border-emerald-200/60'
-                              : app.status === 'REJECTED'
-                              ? 'bg-rose-50 text-rose-700 border-rose-200/60'
-                              : app.status === 'REVISION_REQUIRED'
-                              ? 'bg-amber-50 text-amber-700 border-amber-200/60'
-                              : app.status === 'IN_REVIEW'
-                              ? 'bg-blue-50 text-blue-700 border-blue-200/60'
-                              : 'bg-slate-50 text-slate-700 border-slate-200/60'
-                          }`}
-                        >
-                          {app.status === 'IN_REVIEW'
-                            ? `Wait: ${app.current_approver_role?.replace(/_/g, ' ')}`
-                            : app.status === 'APPROVED'
-                            ? 'Approved'
-                            : app.status === 'REJECTED'
-                            ? 'Rejected'
-                            : app.status === 'REVISION_REQUIRED'
-                            ? 'Revision'
-                            : app.status}
-                        </span>
+                        <StatusBadge
+                          status={app.status}
+                          customLabel={
+                            app.status === 'IN_REVIEW'
+                              ? `Wait: ${
+                                  app.current_approver_role
+                                    ? ROLE_LABELS[app.current_approver_role]
+                                    : 'Review'
+                                }`
+                              : undefined
+                          }
+                          size="sm"
+                        />
                       </td>
 
                       <td className="py-3.5 px-4 text-right whitespace-nowrap">
-                        <div className="flex items-center justify-end gap-1.5">
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setSelectedApp(app);
-                            }}
-                            className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
-                              isMyTurn
-                                ? 'bg-blue-600 text-white hover:bg-blue-700 shadow-2xs'
-                                : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                            }`}
-                          >
-                            <Eye className="w-3.5 h-3.5" />
-                            {isMyTurn ? 'Review & Sign' : 'Inspect'}
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setSelectedApp(app);
-                            }}
-                            className="p-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition"
-                            title="More options"
-                          >
-                            <MoreHorizontal className="w-4 h-4" />
-                          </button>
-                        </div>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedApp(app);
+                          }}
+                          className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
+                            isMyTurn
+                              ? 'bg-slate-900 text-white hover:bg-slate-800 shadow-2xs'
+                              : 'bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200/80'
+                          }`}
+                        >
+                          <Eye className="w-3.5 h-3.5" />
+                          <span>{isMyTurn ? 'Review & Sign' : 'Inspect'}</span>
+                        </button>
                       </td>
                     </tr>
                   );
@@ -598,42 +968,42 @@ export const MasterSheetView: React.FC<MasterSheetViewProps> = ({
           </table>
         </div>
 
-        {/* Modern Pagination Footer (Matches 1.png) */}
-        <div className="px-5 py-3.5 border-t border-slate-100 bg-white flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-600">
-          <div>
+        {/* Pagination Footer */}
+        <div className="px-5 py-3.5 border-t border-slate-200/80 bg-slate-50/50 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-600">
+          <div className="tabular-nums">
             Showing{' '}
-            <span className="font-semibold text-slate-800">
+            <span className="font-bold text-slate-900">
               {filteredApps.length === 0 ? 0 : (currentPage - 1) * pageSize + 1}
             </span>{' '}
-            -{' '}
-            <span className="font-semibold text-slate-800">
+            to{' '}
+            <span className="font-bold text-slate-900">
               {Math.min(currentPage * pageSize, filteredApps.length)}
             </span>{' '}
             of{' '}
-            <span className="font-semibold text-slate-800">{filteredApps.length}</span>{' '}
-            entries
+            <span className="font-bold text-slate-900">
+              {filteredApps.length}
+            </span>{' '}
+            involved records
           </div>
 
           <div className="flex items-center gap-2">
-            {/* Page navigation controls */}
             <button
               type="button"
               disabled={currentPage <= 1}
               onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-              className="p-1.5 rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 disabled:opacity-30 disabled:hover:bg-transparent transition cursor-pointer"
+              className="p-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-30 transition cursor-pointer"
+              title="Previous Page"
             >
               <ChevronLeft className="w-4 h-4" />
             </button>
 
             {Array.from({ length: totalPages }, (_, i) => i + 1)
-              .filter((page) => {
-                // Show first, last, current, and immediate neighbours
-                return (
+              .filter(
+                (page) =>
                   page === 1 ||
                   page === totalPages ||
                   Math.abs(page - currentPage) <= 1
-                );
-              })
+              )
               .map((page, idx, arr) => {
                 const prev = arr[idx - 1];
                 const showEllipsis = prev && page - prev > 1;
@@ -646,10 +1016,10 @@ export const MasterSheetView: React.FC<MasterSheetViewProps> = ({
                     <button
                       type="button"
                       onClick={() => setCurrentPage(page)}
-                      className={`min-w-[28px] h-7 px-2 rounded-lg text-xs font-semibold transition cursor-pointer ${
+                      className={`min-w-[28px] h-7 px-2 rounded-lg text-xs font-semibold tabular-nums transition cursor-pointer ${
                         currentPage === page
-                          ? 'bg-blue-600 text-white shadow-2xs'
-                          : 'border border-slate-200 text-slate-700 hover:bg-slate-50'
+                          ? 'bg-slate-900 text-white shadow-2xs'
+                          : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
                       }`}
                     >
                       {page}
@@ -662,30 +1032,31 @@ export const MasterSheetView: React.FC<MasterSheetViewProps> = ({
               type="button"
               disabled={currentPage >= totalPages}
               onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-              className="p-1.5 rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 disabled:opacity-30 disabled:hover:bg-transparent transition cursor-pointer"
+              className="p-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-30 transition cursor-pointer"
+              title="Next Page"
             >
               <ChevronRight className="w-4 h-4" />
             </button>
 
-            {/* Page Size Dropdown (Matches 1.png '10 / page') */}
             <select
+              aria-label="Rows per page"
               value={pageSize}
               onChange={(e) => {
                 setPageSize(Number(e.target.value));
                 setCurrentPage(1);
               }}
-              className="border border-slate-200 rounded-lg px-2 py-1 text-xs text-slate-700 bg-white ml-2 cursor-pointer"
+              className="ml-2 border border-slate-200 rounded-lg px-2.5 py-1 text-xs font-semibold text-slate-700 bg-white cursor-pointer"
             >
               <option value={5}>5 / page</option>
               <option value={10}>10 / page</option>
-              <option value={20}>20 / page</option>
+              <option value={25}>25 / page</option>
               <option value={50}>50 / page</option>
             </select>
           </div>
         </div>
       </div>
 
-      {/* Unified Detail & Sign-off Drawer (Matches 2.png) */}
+      {/* Unified Detail & Decision Drawer */}
       {selectedApp && (
         <ApplicationDetailDrawer
           application={selectedApp}

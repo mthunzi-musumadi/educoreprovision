@@ -59,8 +59,8 @@ END $$;
 -- 3. Core Tables
 -- ============================================================================
 
--- 3.1 Institutions Table (Multi-Campus Tenant Registry)
-CREATE TABLE IF NOT EXISTS institutions (
+-- 3.1 Sites Table (Multi-Campus Tenant Registry)
+CREATE TABLE IF NOT EXISTS sites (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     code VARCHAR(50) NOT NULL UNIQUE,       -- e.g., 'TRIDENT_COLLEGE', 'SENTINEL_KABITAKA'
     name VARCHAR(150) NOT NULL UNIQUE,
@@ -103,7 +103,7 @@ CREATE TABLE IF NOT EXISTS policy_versions (
 CREATE TABLE IF NOT EXISTS users (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     entra_oid UUID NOT NULL UNIQUE,          -- Microsoft Entra ID Object ID claim
-    institution_id UUID NOT NULL REFERENCES institutions(id) ON DELETE RESTRICT,
+    site_id UUID NOT NULL REFERENCES sites(id) ON DELETE RESTRICT,
     employee_number VARCHAR(50) NOT NULL UNIQUE, -- e.g., 'EDC-1042'
     full_name VARCHAR(150) NOT NULL,
     email VARCHAR(255) NOT NULL UNIQUE,
@@ -120,7 +120,7 @@ CREATE TABLE IF NOT EXISTS applications (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     reference_number VARCHAR(50) NOT NULL UNIQUE, -- e.g., 'EDC-ICT-2026-0001'
     applicant_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
-    institution_id UUID NOT NULL REFERENCES institutions(id) ON DELETE RESTRICT,
+    site_id UUID NOT NULL REFERENCES sites(id) ON DELETE RESTRICT,
     status application_status NOT NULL DEFAULT 'DRAFT',
 
     -- Per-Request Screen 0 Legal Gate Snapshot
@@ -201,7 +201,7 @@ CREATE TABLE IF NOT EXISTS approval_audit_logs (
 -- ============================================================================
 -- 4. Indexes for High-Density Query Performance
 -- ============================================================================
-CREATE INDEX IF NOT EXISTS idx_apps_institution ON applications(institution_id);
+CREATE INDEX IF NOT EXISTS idx_apps_institution ON applications(site_id);
 CREATE INDEX IF NOT EXISTS idx_apps_applicant ON applications(applicant_id);
 CREATE INDEX IF NOT EXISTS idx_apps_status ON applications(status);
 CREATE INDEX IF NOT EXISTS idx_apps_ref_num ON applications(reference_number);
@@ -209,7 +209,7 @@ CREATE INDEX IF NOT EXISTS idx_apps_tier ON applications(equipment_tier_id);
 CREATE INDEX IF NOT EXISTS idx_audit_app_id ON approval_audit_logs(application_id);
 CREATE INDEX IF NOT EXISTS idx_audit_created ON approval_audit_logs(created_at ASC);
 CREATE INDEX IF NOT EXISTS idx_users_entra_oid ON users(entra_oid);
-CREATE INDEX IF NOT EXISTS idx_users_institution ON users(institution_id);
+CREATE INDEX IF NOT EXISTS idx_users_institution ON users(site_id);
 
 -- ============================================================================
 -- 5. Reference Number Sequence Generation Trigger

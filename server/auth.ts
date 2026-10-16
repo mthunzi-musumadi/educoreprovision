@@ -56,14 +56,32 @@ export function mapEntraRoleToUserRole(roles?: string[] | string): UserRole {
   if (combined.includes('superadmin') || combined.includes('super_admin')) {
     return 'SUPER_ADMIN';
   }
+  if (combined.includes('executivehead') || combined.includes('executive_head')) {
+    return 'EXECUTIVE_HEAD';
+  }
+  if (/\bcoo\b/.test(combined) || combined.includes('chief_operating_officer')) {
+    return 'COO';
+  }
   if (combined.includes('itmanager') || combined.includes('it_manager')) {
     return 'IT_MANAGER';
   }
   if (combined.includes('hrmanager') || combined.includes('hr_manager')) {
     return 'HR_MANAGER';
   }
+  if (combined.includes('hrofficer') || combined.includes('hr_officer')) {
+    return 'HR_OFFICER';
+  }
+  if (combined.includes('financemanager') || combined.includes('finance_manager')) {
+    return 'FINANCE_MANAGER';
+  }
+  if (combined.includes('logisticsmanager') || combined.includes('logistics_manager')) {
+    return 'LOGISTICS_MANAGER';
+  }
   if (combined.includes('headteacher') || combined.includes('head_teacher')) {
     return 'HEAD_TEACHER';
+  }
+  if (combined.includes('linemanager') || combined.includes('line_manager')) {
+    return 'LINE_MANAGER';
   }
   return 'APPLICANT';
 }

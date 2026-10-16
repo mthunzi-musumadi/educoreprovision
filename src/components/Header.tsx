@@ -19,9 +19,9 @@ interface HeaderProps {
 }
 
 export const Header: React.FC<HeaderProps> = ({ currentTab, setCurrentTab }) => {
-  const { currentUser, institutions } = useApp();
+  const { currentUser, sites } = useApp();
 
-  const currentInstitution = institutions.find((i) => i.id === currentUser?.institution_id);
+  const currentSite = sites.find((i) => i.id === currentUser?.site_id);
 
   const getRoleLabel = (role: UserRole) => {
     switch (role) {
@@ -48,7 +48,7 @@ export const Header: React.FC<HeaderProps> = ({ currentTab, setCurrentTab }) => 
             <div className="flex flex-wrap items-center gap-1.5">
               {users.map((user) => {
                 const isSelected = user.id === currentUser.id;
-                const inst = institutions.find((i) => i.id === user.institutionId);
+                const inst = sites.find((i) => i.id === user.institutionId);
                 const shortSchool = inst?.name.split(' ')[0] || 'Central';
                 return (
                   <button
@@ -144,7 +144,7 @@ export const Header: React.FC<HeaderProps> = ({ currentTab, setCurrentTab }) => 
                     : 'hover:text-slate-900 hover:bg-slate-50'
                 }`}
               >
-                School Endorsement
+                Site Endorsement
               </button>
             )}
 
@@ -211,7 +211,7 @@ export const Header: React.FC<HeaderProps> = ({ currentTab, setCurrentTab }) => 
             ) : (
               <div className="px-2.5 py-1.5 bg-slate-100 border border-slate-200 rounded-md text-xs text-slate-700 flex items-center gap-1.5">
                 <Building className="w-3.5 h-3.5 text-slate-500" />
-                <span className="font-medium truncate max-w-[140px]">{currentInstitution?.name}</span>
+                <span className="font-medium truncate max-w-[140px]">{currentSite?.name}</span>
               </div>
             )}
           </div>

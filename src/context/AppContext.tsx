@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import {
   UserProfile,
-  Institution,
+  Site,
   EquipmentTier,
   FormDefinition,
   PolicyVersion,
@@ -50,7 +50,7 @@ interface AppContextType {
   error: string | null;
 
   // Reference Catalogs
-  institutions: Institution[];
+  sites: Site[];
   equipmentTiers: EquipmentTier[];
   formDefinitions: FormDefinition[];
   policies: PolicyVersion[];
@@ -79,8 +79,7 @@ interface AppContextType {
   clearByHR: (
     applicationId: string,
     decision: 'APPROVED' | 'REJECTED',
-    comments?: string,
-    vettingChecklist?: Record<string, boolean>
+    comments?: string
   ) => Promise<void>;
   signOffByIT: (
     applicationId: string,
@@ -105,7 +104,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   });
 
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
-  const [institutions, setInstitutions] = useState<Institution[]>([]);
+  const [sites, setSites] = useState<Site[]>([]);
   const [equipmentTiers, setEquipmentTiers] = useState<EquipmentTier[]>([]);
   const [formDefinitions, setFormDefinitions] = useState<FormDefinition[]>([]);
   const [policies, setPolicies] = useState<PolicyVersion[]>([]);
@@ -229,7 +228,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       try {
         const boot = await apiFetch<{
           currentUser: UserProfile;
-          institutions: Institution[];
+          sites: Site[];
           equipmentTiers: EquipmentTier[];
           formDefinitions: FormDefinition[];
           policies: PolicyVersion[];
@@ -237,7 +236,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
         if (!isMounted) return;
         setCurrentUser(boot.currentUser);
-        setInstitutions(boot.institutions);
+        setSites(boot.sites);
         setEquipmentTiers(boot.equipmentTiers);
         setFormDefinitions(boot.formDefinitions);
         setPolicies(boot.policies);
@@ -317,14 +316,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     async (
       applicationId: string,
       decision: 'APPROVED' | 'REJECTED',
-      comments?: string,
-      vettingChecklist?: Record<string, boolean>
+      comments?: string
     ) => {
       await submitStepDecision({
         applicationId,
         decision,
         comments,
-        checklistData: vettingChecklist,
       });
     },
     [submitStepDecision]
@@ -368,7 +365,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         logout,
         isLoading,
         error,
-        institutions,
+        sites,
         equipmentTiers,
         formDefinitions,
         policies,

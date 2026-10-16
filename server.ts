@@ -24,6 +24,7 @@ import {
   clearIctApplicationByHR,
   signOffIctApplicationByIT,
   upsertUserFromEntraClaims,
+  withdrawApplication,
   FormCode,
   LifecycleStatus,
 } from './server/db.ts';
@@ -244,8 +245,8 @@ export async function createApp() {
         idTokenPayload.extension_EmployeeNumber ||
         idTokenPayload.employeeId ||
         idTokenPayload.employee_id;
-      const institutionCode =
-        idTokenPayload.extension_InstitutionCode ||
+      const siteCode =
+        idTokenPayload.extension_SiteCode ||
         idTokenPayload.officeLocation ||
         idTokenPayload.department;
 
@@ -254,7 +255,7 @@ export async function createApp() {
         email,
         fullName,
         role: appRole,
-        institutionCode,
+        siteCode,
         employeeNumber,
       });
 
@@ -276,10 +277,10 @@ export async function createApp() {
   app.get('/api/auth/me', requireAuth, async (req: Request, res: Response) => {
     try {
       const userRes = await pool.query(
-        `SELECT u.*, i.name AS institution_name, i.code AS institution_code
+        `SELECT u.*, i.name AS site_name, i.code AS site_code
          FROM public.users u
-         JOIN public.institutions i ON u.institution_id = i.id
-         WHERE u.entra_oid = $1 AND u.is_active = true`,
+         JOIN public.sites i ON u.site_id = i.id
+         WHERE u.entra_oid::text = $1 AND u.is_active = true`,
         [req.entraOid]
       );
       if (userRes.rows.length === 0) {
@@ -304,9 +305,9 @@ export async function createApp() {
         return res.status(400).json({ error: 'userId is required' });
       }
       const userRes = await pool.query(
-        `SELECT u.*, i.name AS institution_name, i.code AS institution_code
+        `SELECT u.*, i.name AS site_name, i.code AS site_code
          FROM public.users u
-         JOIN public.institutions i ON u.institution_id = i.id
+         JOIN public.sites i ON u.site_id = i.id
          WHERE u.id::text = $1 OR u.entra_oid::text = $1`,
         [userId]
       );
@@ -332,9 +333,10 @@ export async function createApp() {
     try {
       const userRes = await pool.query(
         `SELECT u.id, u.entra_oid, u.full_name, u.email, u.role, u.employee_number,
-                i.name AS institution_name, i.code AS institution_code
+                u.department, u.job_title, u.site_id,
+                i.name AS site_name, i.code AS site_code
          FROM public.users u
-         JOIN public.institutions i ON u.institution_id = i.id
+         JOIN public.sites i ON u.site_id = i.id
          WHERE u.is_active = true
          ORDER BY u.full_name ASC`
       );
@@ -358,19 +360,19 @@ export async function createApp() {
     }
   });
 
-  // Fetch current user profile + reference catalogs (Institutions, Tiers, Active Forms)
+  // Fetch current user profile + reference catalogs (Sites, Tiers, Active Forms)
   app.get('/api/bootstrap', requireAuth, async (req: Request, res: Response) => {
     try {
       const data = await withRlsContext(req.entraOid!, async (client) => {
-        const [userRes, instRes, tiersRes, formsRes, policiesRes] = await Promise.all([
+        const [userRes, sitesRes, tiersRes, formsRes, policiesRes] = await Promise.all([
           client.query(
-            `SELECT u.*, i.name AS institution_name, i.code AS institution_code
+            `SELECT u.*, i.name AS site_name, i.code AS site_code
              FROM public.users u
-             JOIN public.institutions i ON u.institution_id = i.id
-             WHERE u.entra_oid = $1 AND u.is_active = true`,
+             JOIN public.sites i ON u.site_id = i.id
+             WHERE u.entra_oid::text = $1 AND u.is_active = true`,
             [req.entraOid]
           ),
-          client.query(`SELECT * FROM public.institutions WHERE is_active = true ORDER BY name`),
+          client.query(`SELECT * FROM public.sites WHERE is_active = true ORDER BY name`),
           client.query(`SELECT * FROM public.equipment_tiers WHERE is_active = true ORDER BY price_zmw ASC`),
           client.query(`SELECT * FROM public.form_definitions WHERE is_active = true ORDER BY department, title`),
           client.query(`SELECT * FROM public.policy_versions WHERE is_active = true ORDER BY effective_date DESC`),
@@ -378,7 +380,7 @@ export async function createApp() {
 
         return {
           currentUser: userRes.rows[0] || null,
-          institutions: instRes.rows,
+          sites: sitesRes.rows,
           equipmentTiers: tiersRes.rows,
           formDefinitions: formsRes.rows,
           policies: policiesRes.rows,
@@ -395,7 +397,7 @@ export async function createApp() {
     }
   });
 
-  // List all 14 form definitions and their dynamic approval pipelines
+  // List all 18 form definitions and their dynamic approval pipelines
   app.get('/api/forms', requireAuth, async (req: Request, res: Response) => {
     try {
       const forms = await getFormDefinitions(req.entraOid!);
@@ -406,18 +408,19 @@ export async function createApp() {
   });
 
   // ==========================================================================
-  // 3. UNIFIED WORKFLOW ENGINE ROUTES (Handles all 14 Forms)
+  // 3. UNIFIED WORKFLOW ENGINE ROUTES (Handles all 18 Forms)
   // ==========================================================================
 
-  // Query applications queue (auto-filtered by Postgres RLS based on role & school)
+  // Query applications queue (strictly filtered by Postgres RLS based on role, involvement & site)
   app.get('/api/applications', requireAuth, async (req: Request, res: Response) => {
     try {
-      const { formCode, department, status, awaitingMyRoleOnly } = req.query;
+      const { formCode, department, status, awaitingMyRoleOnly, scope } = req.query;
       const applications = await getApplicationsQueue(req.entraOid!, {
         formCode: formCode as FormCode | undefined,
         department: department as string | undefined,
         status: status as LifecycleStatus | undefined,
         awaitingMyRoleOnly: awaitingMyRoleOnly === 'true',
+        scope: scope === 'MY_APPLICATIONS' ? 'MY_APPLICATIONS' : 'INVOLVED',
       });
       res.json(applications);
     } catch (err: any) {
@@ -432,11 +435,11 @@ export async function createApp() {
         const appRes = await client.query(
           `SELECT a.*, fd.code AS form_code, fd.title AS form_title, fd.department,
                   u.full_name AS applicant_name, u.employee_number, u.email AS applicant_email,
-                  i.name AS institution_name
+                  i.name AS site_name, i.code AS site_code
            FROM public.applications a
            JOIN public.form_definitions fd ON a.form_definition_id = fd.id
            JOIN public.users u ON a.applicant_id = u.id
-           JOIN public.institutions i ON a.institution_id = i.id
+           JOIN public.sites i ON a.site_id = i.id
            WHERE a.id = $1`,
           [req.params.id]
         );
@@ -534,24 +537,8 @@ export async function createApp() {
   // Applicant withdrawal route
   app.post('/api/applications/:id/withdraw', requireAuth, async (req: Request, res: Response) => {
     try {
-      const updated = await withRlsContext(req.entraOid!, async (client) => {
-        const resUpdate = await client.query(
-          `UPDATE public.applications
-           SET status = 'CLOSED'::public.lifecycle_status,
-               current_step_order = NULL,
-               current_approver_role = NULL,
-               updated_at = NOW()
-           WHERE id = $1
-             AND status IN ('DRAFT', 'IN_REVIEW', 'REVISION_REQUIRED')
-           RETURNING *`,
-          [req.params.id]
-        );
-        if (resUpdate.rowCount === 0) {
-          throw new Error('Cannot withdraw application (not found, not yours, or already finalized).');
-        }
-        return resUpdate.rows[0];
-      });
-
+      const { reason } = req.body || {};
+      const updated = await withdrawApplication(req.entraOid!, req.params.id, reason);
       res.json(updated);
     } catch (err: any) {
       res.status(400).json({ error: err.message });

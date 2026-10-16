@@ -1,5 +1,5 @@
 import React from 'react';
-import { CheckCircle2, Clock, XCircle, AlertTriangle, CircleDot } from 'lucide-react';
+import { Check, Clock, X, AlertTriangle, Circle } from 'lucide-react';
 import {
   ApplicationApprovalStep,
   LifecycleStatus,
@@ -7,13 +7,10 @@ import {
 } from '../../types';
 
 interface StepperProgressProps {
-  // New dynamic workflow props
   approvals?: ApplicationApprovalStep[];
   lifecycleStatus?: LifecycleStatus;
   currentStepOrder?: number | null;
   submittedAt?: string | null;
-
-  // Legacy fallback prop so existing ICT views don't break
   status?: LegacyApplicationStatus;
   compact?: boolean;
 }
@@ -25,6 +22,24 @@ interface NormalizedStepNode {
   state: 'COMPLETED' | 'CURRENT' | 'UPCOMING' | 'REJECTED' | 'REVISION';
 }
 
+// Helper to make verbose database role titles concise and human-friendly
+const formatConciseStepTitle = (rawLabel: string): string => {
+  const l = rawLabel.toLowerCase();
+  if (l.includes('applicant') || l.includes('submission')) return 'Applicant';
+  if (l.includes('head teacher') || l.includes('headmaster') || l.includes('site head') || l.includes('gm'))
+    return 'Site Head';
+  if (l.includes('line manager') || l.includes('faculty')) return 'Line Manager';
+  if (l.includes('hr officer')) return 'HR Officer';
+  if (l.includes('hr') || l.includes('human resources')) return 'Central HR';
+  if (l.includes('ict') || l.includes('it equipment') || l.includes('it manager'))
+    return 'ICT Sign-off';
+  if (l.includes('finance') || l.includes('payroll')) return 'Finance';
+  if (l.includes('logistics') || l.includes('procurement')) return 'Logistics';
+  if (l.includes('executive head')) return 'Executive Head';
+  if (l.includes('coo') || l.includes('operating officer')) return 'COO';
+  return rawLabel.length > 18 ? `${rawLabel.slice(0, 16)}…` : rawLabel;
+};
+
 export const StepperProgress: React.FC<StepperProgressProps> = ({
   approvals,
   lifecycleStatus,
@@ -34,7 +49,6 @@ export const StepperProgress: React.FC<StepperProgressProps> = ({
   compact = false,
 }) => {
   const nodes: NormalizedStepNode[] = React.useMemo(() => {
-    // 1. Dynamic Pipeline Path (Works for all 14 forms)
     if (approvals && approvals.length > 0 && lifecycleStatus) {
       const isDraft = lifecycleStatus === 'DRAFT';
 
@@ -46,7 +60,7 @@ export const StepperProgress: React.FC<StepperProgressProps> = ({
             ? 'Draft'
             : submittedAt
             ? new Date(submittedAt).toLocaleDateString()
-            : 'Signed',
+            : 'Submitted',
           state: isDraft ? 'CURRENT' : 'COMPLETED',
         },
       ];
@@ -80,7 +94,6 @@ export const StepperProgress: React.FC<StepperProgressProps> = ({
       return stepNodes;
     }
 
-    // 2. Legacy Fallback Path (If a component only passes legacy ICT `status`)
     const s = legacyStatus || 'DRAFT';
     const order: LegacyApplicationStatus[] = [
       'DRAFT',
@@ -94,12 +107,14 @@ export const StepperProgress: React.FC<StepperProgressProps> = ({
     return [
       {
         key: 'sub',
-        label: 'Submitted',
+        label: 'Applicant Submission',
+        sublabel: s === 'DRAFT' ? 'Draft' : 'Submitted',
         state: s === 'DRAFT' ? 'CURRENT' : 'COMPLETED',
       },
       {
         key: 'gm',
-        label: 'GM / Head Review',
+        label: 'Head Teacher Approval',
+        sublabel: 'Site Endorsement',
         state:
           s === 'PENDING_GM_REVIEW'
             ? 'CURRENT'
@@ -112,6 +127,7 @@ export const StepperProgress: React.FC<StepperProgressProps> = ({
       {
         key: 'hr',
         label: 'HR Clearance',
+        sublabel: 'Central HR',
         state:
           s === 'PENDING_HR_REVIEW'
             ? 'CURRENT'
@@ -121,7 +137,8 @@ export const StepperProgress: React.FC<StepperProgressProps> = ({
       },
       {
         key: 'it',
-        label: 'IT Sign-off',
+        label: 'ICT Sign-off',
+        sublabel: 'Asset Provisioning',
         state:
           s === 'PENDING_IT_SIGNOFF'
             ? 'CURRENT'
@@ -134,62 +151,123 @@ export const StepperProgress: React.FC<StepperProgressProps> = ({
     ];
   }, [approvals, lifecycleStatus, currentStepOrder, submittedAt, legacyStatus]);
 
-  const renderIcon = (state: NormalizedStepNode['state']) => {
-    switch (state) {
-      case 'COMPLETED':
-        return <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />;
-      case 'CURRENT':
-        return <Clock className="w-5 h-5 text-amber-600 animate-pulse shrink-0" />;
-      case 'REJECTED':
-        return <XCircle className="w-5 h-5 text-red-600 shrink-0" />;
-      case 'REVISION':
-        return <AlertTriangle className="w-5 h-5 text-orange-600 shrink-0" />;
-      default:
-        return <CircleDot className="w-5 h-5 text-slate-300 shrink-0" />;
-    }
-  };
+  const completedCount = nodes.filter((n) => n.state === 'COMPLETED').length;
+  const totalCount = nodes.length;
 
+  // 1. Compact table-cell mode (For MasterSheetView table rows)
+  if (compact) {
+    return (
+      <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1">
+          {nodes.map((node) => (
+            <div
+              key={node.key}
+              title={`${node.label}: ${node.state.toLowerCase()}`}
+              className={`h-2 rounded-full transition-all ${
+                node.state === 'COMPLETED'
+                  ? 'w-4 bg-emerald-500'
+                  : node.state === 'CURRENT'
+                  ? 'w-5 bg-amber-500 animate-pulse'
+                  : node.state === 'REJECTED'
+                  ? 'w-4 bg-rose-500'
+                  : node.state === 'REVISION'
+                  ? 'w-4 bg-orange-500'
+                  : 'w-2 bg-slate-200'
+              }`}
+            />
+          ))}
+        </div>
+        <span className="text-[11px] font-mono font-medium text-slate-500 whitespace-nowrap">
+          {completedCount}/{totalCount}
+        </span>
+      </div>
+    );
+  }
+
+  // 2. Full corporate stepper mode (For Dashboard cards and Detail Drawer)
   return (
-    <div className="w-full">
-      <div className="flex items-center justify-between gap-2">
+    <div className="w-full py-2 select-none">
+      <div className="flex items-start">
         {nodes.map((node, index) => {
           const isLast = index === nodes.length - 1;
+          const isCompleted = node.state === 'COMPLETED';
+          const isCurrent = node.state === 'CURRENT';
+          const isRejected = node.state === 'REJECTED';
+          const isRevision = node.state === 'REVISION';
+
           return (
-            <React.Fragment key={node.key}>
-              <div className="flex flex-col items-start min-w-0">
-                <div className="flex items-center gap-1.5">
-                  {renderIcon(node.state)}
-                  <span
-                    className={`text-xs font-semibold truncate ${
-                      node.state === 'COMPLETED'
-                        ? 'text-emerald-800'
-                        : node.state === 'CURRENT'
-                        ? 'text-amber-800'
-                        : node.state === 'REJECTED'
-                        ? 'text-red-700'
-                        : node.state === 'REVISION'
-                        ? 'text-orange-700'
-                        : 'text-slate-400'
-                    }`}
-                  >
-                    {node.label}
-                  </span>
-                </div>
-                {!compact && node.sublabel && (
-                  <span className="text-[11px] text-slate-500 pl-6 truncate">
-                    {node.sublabel}
+            <div
+              key={node.key}
+              className="flex-1 flex flex-col items-center relative text-center px-1 min-w-0"
+            >
+              {/* Horizontal connecting track running between node centers */}
+              {!isLast && (
+                <div
+                  className={`absolute top-3.5 left-1/2 w-full h-0.5 z-0 transition-colors ${
+                    isCompleted ? 'bg-emerald-500' : 'bg-slate-200'
+                  }`}
+                />
+              )}
+
+              {/* Node milestone circle */}
+              <div
+                className={`relative z-10 w-7 h-7 rounded-full flex items-center justify-center transition-all shadow-2xs ring-4 ring-white ${
+                  isCompleted
+                    ? 'bg-emerald-600 text-white'
+                    : isCurrent
+                    ? 'bg-amber-500 text-white ring-amber-100 animate-pulse'
+                    : isRejected
+                    ? 'bg-rose-600 text-white'
+                    : isRevision
+                    ? 'bg-orange-500 text-white'
+                    : 'bg-slate-100 text-slate-400 border border-slate-200'
+                }`}
+                title={`${node.label} (${node.state.replace(/_/g, ' ')})`}
+              >
+                {isCompleted ? (
+                  <Check className="w-4 h-4 stroke-[3]" />
+                ) : isCurrent ? (
+                  <Clock className="w-4 h-4 stroke-[2.5]" />
+                ) : isRejected ? (
+                  <X className="w-4 h-4 stroke-[3]" />
+                ) : isRevision ? (
+                  <AlertTriangle className="w-3.5 h-3.5 stroke-[2.5]" />
+                ) : (
+                  <span className="text-[11px] font-bold text-slate-500">
+                    {index + 1}
                   </span>
                 )}
               </div>
 
-              {!isLast && (
+              {/* Label & Subtitle Stacked cleanly underneath */}
+              <div className="mt-2 w-full px-0.5">
                 <div
-                  className={`flex-1 h-0.5 rounded ${
-                    node.state === 'COMPLETED' ? 'bg-emerald-500' : 'bg-slate-200'
+                  className={`text-xs font-bold leading-tight truncate ${
+                    isCompleted
+                      ? 'text-slate-800'
+                      : isCurrent
+                      ? 'text-amber-800 font-extrabold'
+                      : isRejected
+                      ? 'text-rose-700'
+                      : isRevision
+                      ? 'text-orange-700'
+                      : 'text-slate-400'
                   }`}
-                />
-              )}
-            </React.Fragment>
+                  title={node.label}
+                >
+                  {formatConciseStepTitle(node.label)}
+                </div>
+
+                {node.sublabel && (
+                  <div
+                    className="text-[11px] text-slate-500 truncate mt-0.5 leading-tight"
+                    title={node.sublabel}
+                  >
+                    {node.sublabel}
+                  </div>
+                )}
+              </div>
+            </div>
           );
         })}
       </div>

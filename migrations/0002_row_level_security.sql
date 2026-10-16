@@ -14,9 +14,9 @@ RETURNS UUID AS $$
     SELECT NULLIF(current_setting('request.jwt.claim.sub', true), '')::UUID;
 $$ LANGUAGE sql STABLE;
 
-CREATE OR REPLACE FUNCTION current_auth_institution_id() 
+CREATE OR REPLACE FUNCTION current_auth_site_id() 
 RETURNS UUID AS $$
-    SELECT institution_id 
+    SELECT site_id 
     FROM users 
     WHERE entra_oid = current_auth_user_id();
 $$ LANGUAGE sql STABLE;
@@ -45,7 +45,7 @@ CREATE POLICY rls_head_teacher_select ON applications
     FOR SELECT 
     USING (
         current_auth_role() = 'HEAD_TEACHER' AND
-        institution_id = current_auth_institution_id()
+        site_id = current_auth_site_id()
     );
 
 DROP POLICY IF EXISTS rls_central_staff_select ON applications;
@@ -61,7 +61,7 @@ CREATE POLICY rls_applicant_insert ON applications
     FOR INSERT 
     WITH CHECK (
         applicant_id = (SELECT id FROM users WHERE entra_oid = current_auth_user_id()) AND
-        institution_id = current_auth_institution_id()
+        site_id = current_auth_site_id()
     );
 
 -- 3.3 UPDATE Policies: Role-Stage Guardrails
@@ -71,11 +71,11 @@ CREATE POLICY rls_head_teacher_update ON applications
     FOR UPDATE 
     USING (
         current_auth_role() = 'HEAD_TEACHER' AND
-        institution_id = current_auth_institution_id() AND
+        site_id = current_auth_site_id() AND
         status = 'PENDING_GM_REVIEW'
     )
     WITH CHECK (
-        institution_id = current_auth_institution_id() AND
+        site_id = current_auth_site_id() AND
         status IN ('PENDING_HR_REVIEW', 'REVISION_REQUIRED', 'REJECTED')
     );
 

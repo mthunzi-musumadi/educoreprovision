@@ -17,7 +17,7 @@ This phase transitions Educore Provision from local prototype storage to a produ
 
 ### Core Objectives
 1. **Multi-Session Persistence**: Store all equipment applications, user records, and timeline events in a persistent database service so data persists across browser sessions and devices.
-2. **Strict Institution Isolation**: Enforce campus boundaries at the query and service layer so that Head Teachers at Trident College, Sentinel Kabitaka, Frontier School, and Educore Academy cannot access cross-campus records.
+2. **Strict Site Isolation**: Enforce campus boundaries at the query and service layer so that Head Teachers at Trident College, Sentinel Kabitaka, Frontier School, and Educore Academy cannot access cross-campus records.
 3. **Full Full-Stack API**: Implement clean Express REST endpoints backed by a robust database adapter layer:
    - `GET /api/applications`: Scoped query based on caller's role and institution.
    - `POST /api/applications`: Part 1 submission with legal snapshot verification.
@@ -35,7 +35,7 @@ This phase transitions Educore Provision from local prototype storage to a produ
 │                        PostgreSQL / DB Architecture                    │
 ├────────────────────────────────────────────────────────────────────────┤
 │                                                                        │
-│  institutions                                                          │
+│  sites                                                          │
 │  ├── id (UUID)                                                         │
 │  ├── name (VARCHAR)                                                    │
 │  └── code (TRIDENT_COLLEGE | SENTINEL_KABITAKA | FRONTIER | ACADEMY)   │
@@ -45,13 +45,13 @@ This phase transitions Educore Provision from local prototype storage to a produ
 │  ├── entra_oid (UUID)                                                  │
 │  ├── employee_number (VARCHAR - e.g., EDC-1042)                        │
 │  ├── full_name, email, role                                            │
-│  └── institution_id (FK -> institutions)                               │
+│  └── site_id (FK -> sites)                               │
 │                                                                        │
 │  purchase_applications                                                 │
 │  ├── id (UUID)                                                         │
 │  ├── reference_number (VARCHAR - EDC-ICT-2026-XXXX)                    │
 │  ├── applicant_id (FK -> users)                                        │
-│  ├── institution_id (FK -> institutions)                               │
+│  ├── site_id (FK -> sites)                               │
 │  ├── status (DRAFT | PENDING_GM_REVIEW | PENDING_HR_REVIEW | ...)       │
 │  ├── policy_version_tag & legal_text_snapshot (TEXT)                   │
 │  ├── terms_accepted (BOOLEAN) & terms_accepted_at (TIMESTAMPTZ)        │

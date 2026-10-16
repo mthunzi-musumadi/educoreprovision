@@ -17,9 +17,9 @@ async function testEndpoints() {
   try {
     await dbService.initialize();
 
-    // 1. Institutions & Users
-    const insts = await dbService.getInstitutions();
-    assert(insts.length === 5, `Institutions returned (5): got ${insts.length}`);
+    // 1. Sites & Users
+    const insts = await dbService.getSites();
+    assert(insts.length === 5, `Sites returned (5): got ${insts.length}`);
 
     const users = await dbService.getUsers();
     assert(users.length === 7, `Users returned (7): got ${users.length}`);

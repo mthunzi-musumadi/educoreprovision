@@ -11,6 +11,8 @@ import {
   ShieldCheck,
   CheckCircle,
   Users,
+  X,
+  AlertCircle,
 } from 'lucide-react';
 import { useAppContext } from '../../context/AppContext';
 import {
@@ -22,6 +24,7 @@ import {
   StockReturnItem,
   ChildAdmissionEntry,
 } from '../../types';
+import { useToast } from '../common/Toast';
 
 interface NewRequestStepperProps {
   onSuccess?: () => void;
@@ -46,10 +49,11 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
     currentUser,
     formDefinitions,
     equipmentTiers,
-    institutions,
+    sites,
     policies,
     submitWorkflowForm,
   } = useAppContext();
+  const { showToast } = useToast();
 
   const [step, setStep] = useState<1 | 2 | 3>(initialFormCode ? 2 : 1);
   const [selectedDept, setSelectedDept] = useState<DepartmentCode | 'ALL'>('ALL');
@@ -117,7 +121,7 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
     setSelectedFormCode(form.code);
     setSubmitError(null);
 
-    const defaultSchoolId = institutions[0]?.id || currentUser?.institution_id || '';
+    const defaultSiteId = sites[0]?.id || currentUser?.site_id || '';
 
     switch (form.code) {
       case 'ICT_PURCHASE': {
@@ -133,6 +137,9 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
       }
       case 'CHILD_ADMISSION':
         setPayload({
+          staff_name: currentUser?.full_name || '',
+          site: currentUser?.site_name || '',
+          job_title: currentUser?.job_title || '',
           academic_year: new Date().getFullYear().toString(),
           staff_tenure_years: 1,
           notes: '',
@@ -140,37 +147,12 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
             {
               child_full_name: '',
               date_of_birth: '',
-              target_school_id: defaultSchoolId,
+              target_site_id: defaultSiteId,
               year_group: 'Year 1 / Grade 1',
               admission_term: 'TERM_1',
               fee_rebate_percentage: 75,
             },
           ] as ChildAdmissionEntry[],
-        });
-        break;
-      case 'STORES_REQ':
-        setPayload({
-          cost_center: currentUser?.department || 'ACADEMICS',
-          delivery_location: currentUser?.institution_name || '',
-          items: [
-            { item_code: '', description: '', qty_requested: 1, unit: 'EA' },
-          ] as unknown as StoresReqItem[],
-        });
-        break;
-      case 'STOCK_RETURN':
-        setPayload({
-          return_reason: '',
-          items: [
-            { item_code: '', description: '', qty: 1, condition: 'GOOD' },
-          ] as unknown as StockReturnItem[],
-        });
-        break;
-      case 'JOB_DESCRIPTION':
-        setPayload({
-          job_title: currentUser?.job_title || '',
-          department: currentUser?.department || '',
-          reports_to: 'Head of Department / Head Teacher',
-          key_responsibilities: [''],
         });
         break;
       case 'TRAVEL_REQUEST': {
@@ -181,7 +163,7 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
         setPayload({
           cost_code: currentUser?.department || '',
           contact_number: '+260 ',
-          site: currentUser?.institution_name || '',
+          site: currentUser?.site_name || '',
           reason_for_travel: '',
           passengers: [
             {
@@ -215,68 +197,145 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
       }
       case 'SALARY_ADVANCE':
         setPayload({
-          requested_amount_zmw: '',
-          repayment_months: 3,
-          current_net_pay_zmw: '',
+          position: currentUser?.job_title || '',
+          amount_requested_zmw: '',
           reason: '',
+          requested_payment_date: new Date().toISOString().split('T')[0],
+          proposed_instalment_zmw: '',
+          repayment_period_from: '',
+          repayment_period_to: '',
         });
         break;
       case 'GRATUITY_ADVANCE':
         setPayload({
-          contract_start_date: '',
-          accrued_months: 12,
-          requested_amount_zmw: '',
+          position: currentUser?.job_title || '',
+          amount_requested_zmw: '',
+          annual_gratuity_accrued_zmw: '',
           reason: '',
+          contract_end_date: '',
         });
         break;
       case 'PROF_DEV':
         setPayload({
-          course_title: '',
-          provider: '',
-          cost_zmw: '',
-          start_date: '',
-          end_date: '',
-          justification: '',
+          position: currentUser?.job_title || '',
+          description: '',
+          course_days_and_dates: '',
+          training_provider_location: '',
+          expected_outcomes: '',
+          training_costs_zmw: 0,
+          travel_expenses_zmw: 0,
+          total_costs_zmw: 0,
+          details_attached: false,
         });
         break;
       case 'BANK_CHANGE':
         setPayload({
-          bank_name: '',
-          branch_name: '',
-          branch_code: '',
-          account_number: '',
-          account_type: 'CURRENT',
-          effective_payroll_month: '',
+          dept_or_school: currentUser?.department || currentUser?.site_name || '',
+          dept_or_site: currentUser?.site_name || '',
+          phone: '+260 ',
+          date_of_birth: '',
+          marital_status: 'Single',
+          nrc_or_passport: '',
+          old_bank_name: '',
+          old_account_number: '',
+          old_bank_manager_name: '',
+          old_bank_clearance_date: '',
+          transfer_type: 'ZMW_DOMESTIC',
+          zmw_bank_name: '',
+          zmw_branch_name: '',
+          zmw_branch_sort_code: '',
+          zmw_account_name: currentUser?.full_name || '',
+          zmw_account_number: '',
+          intl_account_name: currentUser?.full_name || '',
+          intl_branch_sort_code: '',
+          intl_account_number: '',
+          intl_iban: '',
+          intl_bic: '',
+          intl_bank_name: '',
+          intl_bank_address: '',
+          intl_account_currency: 'USD',
+          intl_beneficiary_address: '',
+          intl_city: '',
+          intl_state: '',
+          intl_country: 'Zambia',
+          intl_post_code: '',
         });
         break;
       case 'CONTRACT_RENEWAL':
         setPayload({
-          current_contract_end_date: '',
-          proposed_tenure_months: 24,
-          performance_summary: '',
+          staff_name: currentUser?.full_name || '',
+          position: currentUser?.job_title || '',
+          supervisor_name: '',
+          school_or_department: currentUser?.department || currentUser?.site_name || '',
+          site_or_department: currentUser?.site_name || '',
+          contract_start_date: '',
+          contract_end_date: '',
+          contract_to_be_renewed: 'YES',
+          renewal_reasons: ['', '', ''],
+          performance_assessment_attached: 'YES',
+          performance_remarks: '',
         });
         break;
       case 'EXCULPATORY':
         setPayload({
-          incident_date: '',
-          charge_reference: '',
-          allegation_summary: '',
+          accused_name: currentUser?.full_name || '',
+          accused_position: currentUser?.job_title || '',
+          accused_employee_number: currentUser?.employee_number || '',
+          dept_or_school: currentUser?.department || currentUser?.site_name || '',
+          dept_or_site: currentUser?.site_name || '',
+          charging_officer_name: '',
+          charging_officer_position: '',
+          date_of_charge: new Date().toISOString().split('T')[0],
+          offence_description: '',
           employee_statement: '',
+        });
+        break;
+      case 'JOB_DESCRIPTION':
+        setPayload({
+          position: currentUser?.job_title || '',
+          location: currentUser?.site_name || '',
+          effective_date: new Date().toISOString().split('T')[0],
+          reports_to: 'Head Teacher / Line Manager',
+          mission: '',
+          education_criteria: '',
+          experience_criteria: '',
+          available_tools: 'Computer, Office Suite, Management System',
+          qualities: 'Self-motivated, excellent communication, strong teamwork',
+          organisation_and_reporting: 'Reports to Line Manager. Immediate subordinates: None.',
+          responsibilities: [
+            { area_title: 'Core Teaching / Operational Delivery', area_description: '' },
+            { area_title: 'Administrative & Reporting Compliance', area_description: '' },
+          ],
+          assessed_performance: 'Annual Appraisal as per Educore Standards',
+          annex_org_chart_attached: true,
         });
         break;
       case 'MANPOWER_REQ':
         setPayload({
-          position_title: '',
-          department: currentUser?.department || '',
-          headcount: 1,
-          employment_type: 'FIXED_TERM',
-          target_start_date: '',
-          justification: '',
+          position_requested: '',
+          number_of_staff_required: 1,
+          required_start_date: '',
+          vacancy_type: 'NEW_POSITION',
+          replacement_of_person: '',
+          new_position_reason: '',
+          is_budgeted: 'YES',
+          consequences_of_failure_to_fill: '',
+          professional_qualifications_required: '',
+          relevant_field_experience_required: '',
+          job_description_summary: '',
+          job_description_attached: 'ATTACHED',
+          reports_to: currentUser?.job_title || 'Head Teacher / Department Head',
+          preferred_recruitment_source: 'Internal / External Advertisement',
+          required_contract_period: '2 Years',
+          remarks: '',
+          salary_recommendation_zmw: '',
+          other_benefits: 'As per Educore Services standard staff benefits',
         });
         break;
       case 'EVENT_COMPLETION':
         setPayload({
-          schools: currentUser?.institution_name || '',
+          sites: currentUser?.site_name || '',
+          schools: currentUser?.site_name || '',
           event_name: '',
           event_type: '',
           event_coordinator: currentUser?.full_name || '',
@@ -288,7 +347,7 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
         break;
       case 'STOCK_RETURN':
         setPayload({
-          location: currentUser?.institution_name || '',
+          location: currentUser?.site_name || '',
           return_reason: '',
           inventory_action: 'RETURN_TO_STOCK',
           inventory_action_other: '',
@@ -299,6 +358,8 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
         break;
       case 'STORES_REQ':
         setPayload({
+          school: currentUser?.site_name || '',
+          site: currentUser?.site_name || '',
           department: currentUser?.department || '',
           purchase_order_no: '',
           purpose: '',
@@ -339,11 +400,13 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
         setPayload({
           charging_officer_name: currentUser?.full_name || '',
           charging_officer_position: currentUser?.job_title || '',
-          charging_school: currentUser?.institution_name || '',
+          charging_site: currentUser?.site_name || '',
+          charging_school: currentUser?.site_name || '',
           accused_name: '',
           accused_position: '',
           accused_man_no: '',
-          accused_dept_school: currentUser?.institution_name || '',
+          accused_dept_site: currentUser?.site_name || '',
+          accused_dept_school: currentUser?.site_name || '',
           date_of_charge: new Date().toISOString().split('T')[0],
           nature_of_offence: '',
           brief_account_of_offence: '',
@@ -399,6 +462,11 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
         termsAccepted: selectedForm.requires_policy ? termsAccepted : true,
         digitalSignature: digitalSignature.trim() || currentUser?.full_name,
       });
+      showToast(
+        'success',
+        submitImmediately ? 'Application Submitted' : 'Draft Saved',
+        `Your ${selectedForm.title} has been recorded in the workflow engine.`
+      );
       onSuccess?.();
     } catch (err: any) {
       setSubmitError(err.message || 'Failed to submit application');
@@ -498,7 +566,7 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
 
       case 'CHILD_ADMISSION': {
         const children: ChildAdmissionEntry[] = payload.children || [];
-        const defaultSchoolId = institutions[0]?.id || '';
+        const defaultSiteId = sites[0]?.id || '';
 
         return (
           <div className="space-y-6">
@@ -546,7 +614,7 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                       {
                         child_full_name: '',
                         date_of_birth: '',
-                        target_school_id: defaultSchoolId,
+                        target_site_id: defaultSiteId,
                         year_group: '',
                         admission_term: 'TERM_1',
                         fee_rebate_percentage: 75,
@@ -621,18 +689,18 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
 
                       <div>
                         <label className="block text-[11px] font-semibold text-slate-600 mb-1">
-                          Target Educore School *
+                          Target Educore Site *
                         </label>
                         <select
-                          value={child.target_school_id}
+                          value={child.target_site_id}
                           onChange={(e) => {
                             const next = [...children];
-                            next[idx] = { ...child, target_school_id: e.target.value };
+                            next[idx] = { ...child, target_site_id: e.target.value };
                             updateField('children', next);
                           }}
                           className="w-full border rounded-lg px-2.5 py-1.5 text-xs"
                         >
-                          {institutions.map((inst) => (
+                          {sites.map((inst) => (
                             <option key={inst.id} value={inst.id}>
                               {inst.name}
                             </option>
@@ -754,7 +822,7 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
               </div>
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Site / School *
+                  Site *
                 </label>
                 <input
                   type="text"
@@ -1106,414 +1174,1347 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
           </div>
         );
       }
+      case 'SALARY_ADVANCE':
         return (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="md:col-span-2">
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Destination *
-              </label>
-              <input
-                type="text"
-                placeholder="e.g., Lusaka / Sentinel Kabitaka"
-                value={payload.destination || ''}
-                onChange={(e) => updateField('destination', e.target.value)}
-                className="w-full border rounded-lg px-3 py-2 text-sm"
-              />
+          <div className="space-y-4">
+            <div className="bg-blue-50/50 p-3 rounded-xl border border-blue-100 flex items-center justify-between text-xs">
+              <span className="text-slate-600">Applicant: <strong>{currentUser?.full_name}</strong></span>
+              <span className="text-slate-600">Staff #: <strong>{currentUser?.employee_number}</strong></span>
+              <span className="text-slate-600">Site: <strong>{currentUser?.site_name}</strong></span>
             </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Departure Date *
-              </label>
-              <input
-                type="date"
-                value={payload.departure_date || ''}
-                onChange={(e) => updateField('departure_date', e.target.value)}
-                className="w-full border rounded-lg px-3 py-2 text-sm"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Return Date *
-              </label>
-              <input
-                type="date"
-                value={payload.return_date || ''}
-                onChange={(e) => updateField('return_date', e.target.value)}
-                className="w-full border rounded-lg px-3 py-2 text-sm"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Transport Mode
-              </label>
-              <select
-                value={payload.transport_mode || 'VEHICLE'}
-                onChange={(e) => updateField('transport_mode', e.target.value)}
-                className="w-full border rounded-lg px-3 py-2 text-sm"
-              >
-                <option value="VEHICLE">Company Vehicle</option>
-                <option value="FLIGHT">Commercial / Charter Flight</option>
-                <option value="BUS">Public Coach / Bus</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Estimated Cost / Per Diem (ZMW)
-              </label>
-              <input
-                type="number"
-                value={payload.estimated_cost_zmw || ''}
-                onChange={(e) => updateField('estimated_cost_zmw', Number(e.target.value))}
-                className="w-full border rounded-lg px-3 py-2 text-sm"
-              />
-            </div>
-            <div className="md:col-span-2">
-              <label className="flex items-center gap-2 text-xs font-semibold text-slate-700 cursor-pointer">
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Position / Job Title *
+                </label>
                 <input
-                  type="checkbox"
-                  checked={Boolean(payload.accommodation_required)}
-                  onChange={(e) => updateField('accommodation_required', e.target.checked)}
+                  type="text"
+                  value={payload.position || ''}
+                  onChange={(e) => updateField('position', e.target.value)}
+                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  placeholder="e.g., Senior Secondary Teacher"
                 />
-                Overnight Accommodation Required
-              </label>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Amount Requested (ZMW) *
+                </label>
+                <input
+                  type="number"
+                  min={1}
+                  value={payload.amount_requested_zmw ?? payload.requested_amount_zmw ?? ''}
+                  onChange={(e) => {
+                    const val = Number(e.target.value);
+                    updateField('amount_requested_zmw', val);
+                    updateField('requested_amount_zmw', val);
+                  }}
+                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  placeholder="Amount in Kwacha"
+                />
+              </div>
+
+              <div className="md:col-span-2">
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Reason for Requesting an Advance *
+                </label>
+                <textarea
+                  rows={3}
+                  value={payload.reason || ''}
+                  onChange={(e) => updateField('reason', e.target.value)}
+                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  placeholder="State detailed reason for advance..."
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Requested Date of Advance Payment *
+                </label>
+                <input
+                  type="date"
+                  value={payload.requested_payment_date || ''}
+                  onChange={(e) => updateField('requested_payment_date', e.target.value)}
+                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Proposed Repayment Amount / Instalment (ZMW) *
+                </label>
+                <input
+                  type="number"
+                  min={1}
+                  value={payload.proposed_instalment_zmw || ''}
+                  onChange={(e) => updateField('proposed_instalment_zmw', Number(e.target.value))}
+                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  placeholder="Monthly instalment in Kwacha"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Proposed Repayment Period From *
+                </label>
+                <input
+                  type="month"
+                  value={payload.repayment_period_from || ''}
+                  onChange={(e) => updateField('repayment_period_from', e.target.value)}
+                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Proposed Repayment Period To *
+                </label>
+                <input
+                  type="month"
+                  value={payload.repayment_period_to || ''}
+                  onChange={(e) => updateField('repayment_period_to', e.target.value)}
+                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                />
+              </div>
             </div>
-            <div className="md:col-span-2">
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Purpose of Travel *
-              </label>
-              <textarea
-                rows={3}
-                value={payload.purpose || ''}
-                onChange={(e) => updateField('purpose', e.target.value)}
-                className="w-full border rounded-lg px-3 py-2 text-sm"
-              />
+
+            <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-[11px] text-amber-900 leading-relaxed">
+              <strong>Approval Chain:</strong> Supervisor / Head Teacher &rarr; HR Manager (Affordability & Compliance Check) &rarr; Chief Operations Officer (Final Authorisation).
             </div>
           </div>
         );
 
-      case 'SALARY_ADVANCE':
       case 'GRATUITY_ADVANCE':
         return (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Requested Amount (ZMW) *
-              </label>
-              <input
-                type="number"
-                value={payload.requested_amount_zmw || ''}
-                onChange={(e) => updateField('requested_amount_zmw', Number(e.target.value))}
-                className="w-full border rounded-lg px-3 py-2 text-sm"
-              />
+          <div className="space-y-4">
+            <div className="bg-blue-50/50 p-3 rounded-xl border border-blue-100 flex items-center justify-between text-xs">
+              <span className="text-slate-600">Applicant: <strong>{currentUser?.full_name}</strong></span>
+              <span className="text-slate-600">Staff #: <strong>{currentUser?.employee_number}</strong></span>
+              <span className="text-slate-600">Site: <strong>{currentUser?.site_name}</strong></span>
             </div>
-            {selectedFormCode === 'SALARY_ADVANCE' ? (
-              <>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Position / Role *
+                </label>
+                <input
+                  type="text"
+                  value={payload.position || ''}
+                  onChange={(e) => updateField('position', e.target.value)}
+                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  placeholder="e.g., Facilities Supervisor"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Contract End Date *
+                </label>
+                <input
+                  type="date"
+                  value={payload.contract_end_date || ''}
+                  onChange={(e) => updateField('contract_end_date', e.target.value)}
+                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Amount Requested (ZMW) *
+                </label>
+                <input
+                  type="number"
+                  min={1}
+                  value={payload.amount_requested_zmw ?? payload.requested_amount_zmw ?? ''}
+                  onChange={(e) => {
+                    const val = Number(e.target.value);
+                    updateField('amount_requested_zmw', val);
+                    updateField('requested_amount_zmw', val);
+                  }}
+                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  placeholder="Requested advance amount"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Annual Gratuity Amount Accrued (ZMW) *
+                </label>
+                <input
+                  type="number"
+                  min={1}
+                  value={payload.annual_gratuity_accrued_zmw || ''}
+                  onChange={(e) => updateField('annual_gratuity_accrued_zmw', Number(e.target.value))}
+                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  placeholder="Total accrued gratuity to date"
+                />
+              </div>
+
+              <div className="md:col-span-2">
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Reason for Requesting an Advance *
+                </label>
+                <textarea
+                  rows={3}
+                  value={payload.reason || ''}
+                  onChange={(e) => updateField('reason', e.target.value)}
+                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  placeholder="State detailed reason for gratuity advance..."
+                />
+              </div>
+            </div>
+
+            <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-[11px] text-amber-900 leading-relaxed">
+              <strong>Approval Chain:</strong> Supervisor / Head Teacher &rarr; HR Manager (Accrual Verification) &rarr; Finance Manager (Authorisation & Disbursement).
+            </div>
+          </div>
+        );
+
+      case 'BANK_CHANGE': {
+        const transferType = payload.transfer_type || 'ZMW_DOMESTIC';
+        return (
+          <div className="space-y-6">
+            {/* Section 1: Staff Personal Details */}
+            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-700 block">
+                1. Staff Particulars (As in NRC / Passport)
+              </span>
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Repayment Period (Months) *
+                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                    Department / Site *
                   </label>
                   <input
-                    type="number"
-                    min={1}
-                    max={12}
-                    value={payload.repayment_months || ''}
-                    onChange={(e) => updateField('repayment_months', Number(e.target.value))}
-                    className="w-full border rounded-lg px-3 py-2 text-sm"
+                    type="text"
+                    value={payload.dept_or_site ?? payload.dept_or_school ?? ''}
+                    onChange={(e) => {
+                      updateField('dept_or_site', e.target.value);
+                      updateField('dept_or_school', e.target.value);
+                    }}
+                    className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs"
                   />
                 </div>
-                <div className="md:col-span-2">
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Current Net Monthly Pay (ZMW)
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                    Phone Number *
                   </label>
                   <input
-                    type="number"
-                    value={payload.current_net_pay_zmw || ''}
-                    onChange={(e) => updateField('current_net_pay_zmw', Number(e.target.value))}
-                    className="w-full border rounded-lg px-3 py-2 text-sm"
+                    type="tel"
+                    value={payload.phone || ''}
+                    onChange={(e) => updateField('phone', e.target.value)}
+                    className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs"
                   />
                 </div>
-              </>
-            ) : (
-              <>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Current Contract Start Date *
+                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                    Date of Birth *
                   </label>
                   <input
                     type="date"
-                    value={payload.contract_start_date || ''}
-                    onChange={(e) => updateField('contract_start_date', e.target.value)}
-                    className="w-full border rounded-lg px-3 py-2 text-sm"
+                    value={payload.date_of_birth || ''}
+                    onChange={(e) => updateField('date_of_birth', e.target.value)}
+                    className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                    Marital Status *
+                  </label>
+                  <select
+                    value={payload.marital_status || 'Single'}
+                    onChange={(e) => updateField('marital_status', e.target.value)}
+                    className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs"
+                  >
+                    <option value="Single">Single</option>
+                    <option value="Married">Married</option>
+                    <option value="Divorced">Divorced</option>
+                    <option value="Widowed">Widowed</option>
+                  </select>
+                </div>
+                <div className="sm:col-span-2">
+                  <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                    NRC / Passport # *
+                  </label>
+                  <input
+                    type="text"
+                    value={payload.nrc_or_passport || ''}
+                    onChange={(e) => updateField('nrc_or_passport', e.target.value)}
+                    placeholder="e.g. 123456/10/1 or ZM123456"
+                    className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Section 2: Previous Bank Details & Bank Clearance */}
+            <div className="bg-amber-50/50 p-4 rounded-xl border border-amber-200 space-y-3">
+              <span className="text-xs font-bold uppercase tracking-wider text-amber-900 block">
+                2. Previous Bank Details (Direct Salary Payment Change)
+              </span>
+              <p className="text-[11px] text-slate-600">
+                I wish to change my Bank Account Details (for direct payment of salary) from:
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                    Previous Bank Name *
+                  </label>
+                  <input
+                    type="text"
+                    value={payload.old_bank_name || ''}
+                    onChange={(e) => {
+                      updateField('old_bank_name', e.target.value);
+                      if (!payload.bank_name) updateField('bank_name', e.target.value);
+                    }}
+                    placeholder="e.g., Barclays / Absa Bank"
+                    className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                    Previous Bank Account Number *
+                  </label>
+                  <input
+                    type="text"
+                    value={payload.old_account_number || ''}
+                    onChange={(e) => {
+                      updateField('old_account_number', e.target.value);
+                      if (!payload.account_number) updateField('account_number', e.target.value);
+                    }}
+                    className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                    Bank Manager Name (Bank Clearance / No-Objection)
+                  </label>
+                  <input
+                    type="text"
+                    value={payload.old_bank_manager_name || ''}
+                    onChange={(e) => updateField('old_bank_manager_name', e.target.value)}
+                    placeholder="Name of Bank Manager issuing clearance"
+                    className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                    Clearance Date
+                  </label>
+                  <input
+                    type="date"
+                    value={payload.old_bank_clearance_date || ''}
+                    onChange={(e) => updateField('old_bank_clearance_date', e.target.value)}
+                    className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Section 3: New Account Type & Details */}
+            <div className="bg-blue-50/40 p-4 rounded-xl border border-blue-200 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div>
+                  <span className="text-xs font-bold uppercase tracking-wider text-blue-900 block">
+                    3. New Salary Account Details
+                  </span>
+                  <p className="text-[11px] text-slate-600">
+                    Request that my salary be paid into the account below:
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => updateField('transfer_type', 'ZMW_DOMESTIC')}
+                    className={`px-3 py-1 rounded-lg text-xs font-bold border transition ${
+                      transferType === 'ZMW_DOMESTIC'
+                        ? 'bg-blue-700 text-white border-blue-700'
+                        : 'bg-white text-slate-700 border-slate-300'
+                    }`}
+                  >
+                    ZMW Domestic Bank
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => updateField('transfer_type', 'INTERNATIONAL')}
+                    className={`px-3 py-1 rounded-lg text-xs font-bold border transition ${
+                      transferType === 'INTERNATIONAL'
+                        ? 'bg-blue-700 text-white border-blue-700'
+                        : 'bg-white text-slate-700 border-slate-300'
+                    }`}
+                  >
+                    International Transfer
+                  </button>
+                </div>
+              </div>
+
+              {transferType === 'ZMW_DOMESTIC' ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-2">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                      Bank Name *
+                    </label>
+                    <input
+                      type="text"
+                      value={payload.zmw_bank_name || ''}
+                      onChange={(e) => {
+                        updateField('zmw_bank_name', e.target.value);
+                        updateField('bank_name', e.target.value);
+                      }}
+                      placeholder="e.g., Stanbic Bank Zambia"
+                      className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                      Branch Name *
+                    </label>
+                    <input
+                      type="text"
+                      value={payload.zmw_branch_name || ''}
+                      onChange={(e) => {
+                        updateField('zmw_branch_name', e.target.value);
+                        updateField('branch_name', e.target.value);
+                      }}
+                      placeholder="e.g., Solwezi Branch"
+                      className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                      Branch Sort Code
+                    </label>
+                    <input
+                      type="text"
+                      value={payload.zmw_branch_sort_code || ''}
+                      onChange={(e) => {
+                        updateField('zmw_branch_sort_code', e.target.value);
+                        updateField('branch_code', e.target.value);
+                      }}
+                      placeholder="e.g., 040012"
+                      className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                      Account Name *
+                    </label>
+                    <input
+                      type="text"
+                      value={payload.zmw_account_name || ''}
+                      onChange={(e) => updateField('zmw_account_name', e.target.value)}
+                      placeholder="Name as registered on account"
+                      className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs"
+                    />
+                  </div>
+                  <div className="md:col-span-2">
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                      Account Number *
+                    </label>
+                    <input
+                      type="text"
+                      value={payload.zmw_account_number || ''}
+                      onChange={(e) => {
+                        updateField('zmw_account_number', e.target.value);
+                        updateField('account_number', e.target.value);
+                      }}
+                      placeholder="e.g., 913000..."
+                      className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs font-mono"
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-2">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                      Account Name *
+                    </label>
+                    <input
+                      type="text"
+                      value={payload.intl_account_name || ''}
+                      onChange={(e) => updateField('intl_account_name', e.target.value)}
+                      className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                      Branch Sort Code
+                    </label>
+                    <input
+                      type="text"
+                      value={payload.intl_branch_sort_code || ''}
+                      onChange={(e) => updateField('intl_branch_sort_code', e.target.value)}
+                      className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                      Account Number *
+                    </label>
+                    <input
+                      type="text"
+                      value={payload.intl_account_number || ''}
+                      onChange={(e) => {
+                        updateField('intl_account_number', e.target.value);
+                        updateField('account_number', e.target.value);
+                      }}
+                      className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                      IBAN *
+                    </label>
+                    <input
+                      type="text"
+                      value={payload.intl_iban || ''}
+                      onChange={(e) => updateField('intl_iban', e.target.value)}
+                      placeholder="e.g. GB29NWBK60161331926819"
+                      className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                      BIC / SWIFT *
+                    </label>
+                    <input
+                      type="text"
+                      value={payload.intl_bic || ''}
+                      onChange={(e) => updateField('intl_bic', e.target.value)}
+                      placeholder="e.g. NWBKGB2L"
+                      className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                      Account Currency *
+                    </label>
+                    <input
+                      type="text"
+                      value={payload.intl_account_currency || 'USD'}
+                      onChange={(e) => updateField('intl_account_currency', e.target.value)}
+                      placeholder="USD / GBP / EUR / ZAR"
+                      className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs"
+                    />
+                  </div>
+                  <div className="md:col-span-2">
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                      Bank Name *
+                    </label>
+                    <input
+                      type="text"
+                      value={payload.intl_bank_name || ''}
+                      onChange={(e) => {
+                        updateField('intl_bank_name', e.target.value);
+                        updateField('bank_name', e.target.value);
+                      }}
+                      className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                      Bank Address
+                    </label>
+                    <input
+                      type="text"
+                      value={payload.intl_bank_address || ''}
+                      onChange={(e) => updateField('intl_bank_address', e.target.value)}
+                      className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs"
+                    />
+                  </div>
+                  <div className="md:col-span-3">
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                      Beneficiary Address
+                    </label>
+                    <input
+                      type="text"
+                      value={payload.intl_beneficiary_address || ''}
+                      onChange={(e) => updateField('intl_beneficiary_address', e.target.value)}
+                      className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                      City
+                    </label>
+                    <input
+                      type="text"
+                      value={payload.intl_city || ''}
+                      onChange={(e) => updateField('intl_city', e.target.value)}
+                      className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                      State / Province
+                    </label>
+                    <input
+                      type="text"
+                      value={payload.intl_state || ''}
+                      onChange={(e) => updateField('intl_state', e.target.value)}
+                      className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                      Country *
+                    </label>
+                    <input
+                      type="text"
+                      value={payload.intl_country || ''}
+                      onChange={(e) => updateField('intl_country', e.target.value)}
+                      className="w-full bg-white border rounded-lg px-2.5 py-1.5 text-xs"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      }
+
+      case 'PROF_DEV': {
+        const trainingCost = Number(payload.training_costs_zmw || 0);
+        const travelExp = Number(payload.travel_expenses_zmw || 0);
+        const totalProfDevCost = trainingCost + travelExp;
+
+        const updateProfDevCosts = (trCost: number, tvCost: number) => {
+          const tot = trCost + tvCost;
+          setPayload((prev) => ({
+            ...prev,
+            training_costs_zmw: trCost,
+            travel_expenses_zmw: tvCost,
+            total_costs_zmw: tot,
+            cost_zmw: tot,
+          }));
+        };
+
+        return (
+          <div className="space-y-4">
+            <div className="bg-blue-50/50 p-3 rounded-xl border border-blue-100 flex items-center justify-between text-xs">
+              <span className="text-slate-600">Applicant: <strong>{currentUser?.full_name}</strong></span>
+              <span className="text-slate-600">Employee #: <strong>{currentUser?.employee_number}</strong></span>
+              <span className="text-slate-600">Site: <strong>{currentUser?.site_name}</strong></span>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Position *
+                </label>
+                <input
+                  type="text"
+                  value={payload.position || ''}
+                  onChange={(e) => updateField('position', e.target.value)}
+                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  placeholder="e.g., Mathematics Teacher"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Training Provider / Location *
+                </label>
+                <input
+                  type="text"
+                  value={payload.training_provider_location || ''}
+                  onChange={(e) => {
+                    updateField('training_provider_location', e.target.value);
+                    updateField('provider', e.target.value);
+                  }}
+                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  placeholder="e.g., Cambridge Assessment / Lusaka"
+                />
+              </div>
+
+              <div className="md:col-span-2">
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Description of Professional Development *
+                </label>
+                <textarea
+                  rows={3}
+                  value={payload.description || ''}
+                  onChange={(e) => {
+                    updateField('description', e.target.value);
+                    updateField('course_title', e.target.value);
+                  }}
+                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  placeholder="Details of the professional development course, workshop, or qualification..."
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Day(s) and Date(s) of Course or Training *
+                </label>
+                <input
+                  type="text"
+                  value={payload.course_days_and_dates || ''}
+                  onChange={(e) => {
+                    updateField('course_days_and_dates', e.target.value);
+                    updateField('start_date', e.target.value);
+                  }}
+                  placeholder="e.g., 5 Days (12th - 16th May 2026)"
+                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                />
+              </div>
+
+              <div className="md:col-span-2">
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Expected Outcomes of the Training / Course *
+                </label>
+                <textarea
+                  rows={3}
+                  value={payload.expected_outcomes || ''}
+                  onChange={(e) => {
+                    updateField('expected_outcomes', e.target.value);
+                    updateField('justification', e.target.value);
+                  }}
+                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  placeholder="Expected impact on teaching delivery, curriculum enhancement, and student outcomes..."
+                />
+              </div>
+
+              {/* Cost Breakdown */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Training Costs (ZMW) *
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  value={payload.training_costs_zmw || ''}
+                  onChange={(e) => updateProfDevCosts(Number(e.target.value), travelExp)}
+                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  placeholder="Tuition / Registration fee"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Travel Expenses (ZMW)
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  value={payload.travel_expenses_zmw || ''}
+                  onChange={(e) => updateProfDevCosts(trainingCost, Number(e.target.value))}
+                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  placeholder="Transport, meals & accommodation"
+                />
+              </div>
+            </div>
+
+            <div className="p-3 bg-slate-100 rounded-xl flex items-center justify-between text-xs">
+              <label className="flex items-center gap-2 font-semibold text-slate-700 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={Boolean(payload.details_attached)}
+                  onChange={(e) => updateField('details_attached', e.target.checked)}
+                />
+                Details / Course Brochure Attached
+              </label>
+              <div className="text-right">
+                <span className="text-slate-500 block">Total Costs:</span>
+                <span className="text-sm font-bold text-blue-700">
+                  ZMW {totalProfDevCost.toLocaleString()}
+                </span>
+              </div>
+            </div>
+
+            <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-[11px] text-amber-900 leading-relaxed">
+              <strong>Evaluation Criteria:</strong> The Supervisor evaluates Expected Impact/Effectiveness for Educore Services (Very High / High / Medium / Low / Very Low), followed by HRM recommendation and Executive Head approval.
+            </div>
+          </div>
+        );
+      }
+
+      case 'CONTRACT_RENEWAL': {
+        const reasons: string[] = Array.isArray(payload.renewal_reasons)
+          ? payload.renewal_reasons
+          : ['', '', ''];
+
+        const updateReason = (idx: number, val: string) => {
+          const next = [...reasons];
+          next[idx] = val;
+          updateField('renewal_reasons', next);
+        };
+
+        return (
+          <div className="space-y-4">
+            <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-xs text-amber-900 leading-relaxed">
+              <strong>Notice:</strong> Please do not discuss or confirm contract renewal or non-renewal with the staff member until HR has confirmed receipt and agreement with the decision stated on the form.
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Staff Name *
+                </label>
+                <input
+                  type="text"
+                  value={payload.staff_name || ''}
+                  onChange={(e) => updateField('staff_name', e.target.value)}
+                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Position *
+                </label>
+                <input
+                  type="text"
+                  value={payload.position || ''}
+                  onChange={(e) => updateField('position', e.target.value)}
+                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Supervisor *
+                </label>
+                <input
+                  type="text"
+                  value={payload.supervisor_name || ''}
+                  onChange={(e) => updateField('supervisor_name', e.target.value)}
+                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  School / Department *
+                </label>
+                <input
+                  type="text"
+                  value={payload.school_or_department ?? payload.site_or_department ?? ''}
+                  onChange={(e) => {
+                    updateField('school_or_department', e.target.value);
+                    updateField('site_or_department', e.target.value);
+                  }}
+                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Contract Start Date *
+                </label>
+                <input
+                  type="date"
+                  value={payload.contract_start_date || ''}
+                  onChange={(e) => updateField('contract_start_date', e.target.value)}
+                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Contract End Date *
+                </label>
+                <input
+                  type="date"
+                  value={payload.contract_end_date ?? payload.current_contract_end_date ?? ''}
+                  onChange={(e) => {
+                    updateField('contract_end_date', e.target.value);
+                    updateField('current_contract_end_date', e.target.value);
+                  }}
+                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                />
+              </div>
+            </div>
+
+            <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-3">
+              <label className="block text-xs font-bold text-slate-800">
+                Contract to be Renewed? *
+              </label>
+              <div className="flex gap-4">
+                {(['YES', 'NO'] as const).map((opt) => (
+                  <button
+                    type="button"
+                    key={opt}
+                    onClick={() => updateField('contract_to_be_renewed', opt)}
+                    className={`px-5 py-2 rounded-lg text-xs font-bold border transition ${
+                      (payload.contract_to_be_renewed || 'YES') === opt
+                        ? opt === 'YES' ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-red-600 text-white border-red-600'
+                        : 'bg-white text-slate-700 border-slate-300'
+                    }`}
+                  >
+                    {opt === 'YES' ? 'Yes, Renew Contract' : 'No, Do Not Renew'}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-bold text-slate-800">
+                  Reasons for Contract Renewal / Non-Renewal *
+                </label>
+                <span className="text-[11px] text-slate-500 block mb-2">
+                  As a general rule, the Head bases this decision on the staff member's targets for development (as specified in the Personal Target Setting Form) and progress made against these:
+                </span>
+              </div>
+              {[0, 1, 2].map((idx) => (
+                <div key={idx} className="flex items-start gap-2">
+                  <span className="text-xs font-bold text-slate-500 pt-2 w-5">{idx + 1}.</span>
+                  <input
+                    type="text"
+                    value={reasons[idx] || ''}
+                    onChange={(e) => updateReason(idx, e.target.value)}
+                    placeholder={`Progress against development target #${idx + 1}...`}
+                    className="flex-1 border rounded-lg px-3 py-2 text-xs"
+                  />
+                </div>
+              ))}
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 border-t border-slate-100">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Performance Assessment Attached? *
+                </label>
+                <select
+                  value={payload.performance_assessment_attached || 'YES'}
+                  onChange={(e) => updateField('performance_assessment_attached', e.target.value)}
+                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                >
+                  <option value="YES">Yes, Attached</option>
+                  <option value="NO">No</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Performance Assessment Remarks
+                </label>
+                <input
+                  type="text"
+                  value={payload.performance_remarks || ''}
+                  onChange={(e) => updateField('performance_remarks', e.target.value)}
+                  placeholder="Additional remarks regarding assessment"
+                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                />
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      case 'EXCULPATORY':
+        return (
+          <div className="space-y-5">
+            {/* Accused Particulars */}
+            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-700 block">
+                Accused Employee Details
+              </span>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Name of the Accused *
+                  </label>
+                  <input
+                    type="text"
+                    value={payload.accused_name || ''}
+                    onChange={(e) => updateField('accused_name', e.target.value)}
+                    className="w-full bg-white border rounded-lg px-3 py-2 text-sm"
                   />
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Accrued Service Months on Contract *
+                    Position *
+                  </label>
+                  <input
+                    type="text"
+                    value={payload.accused_position || ''}
+                    onChange={(e) => updateField('accused_position', e.target.value)}
+                    className="w-full bg-white border rounded-lg px-3 py-2 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Employee Number / Man No. *
+                  </label>
+                  <input
+                    type="text"
+                    value={payload.accused_employee_number || ''}
+                    onChange={(e) => updateField('accused_employee_number', e.target.value)}
+                    className="w-full bg-white border rounded-lg px-3 py-2 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Dept / School (Site) *
+                  </label>
+                  <input
+                    type="text"
+                    value={payload.dept_or_school ?? payload.dept_or_site ?? ''}
+                    onChange={(e) => {
+                      updateField('dept_or_school', e.target.value);
+                      updateField('dept_or_site', e.target.value);
+                    }}
+                    className="w-full bg-white border rounded-lg px-3 py-2 text-sm"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Charging Officer Particulars */}
+            <div className="bg-amber-50/50 p-4 rounded-xl border border-amber-200 space-y-3">
+              <span className="text-xs font-bold uppercase tracking-wider text-amber-900 block">
+                Charging Officer Particulars
+              </span>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Name of Charging Officer *
+                  </label>
+                  <input
+                    type="text"
+                    value={payload.charging_officer_name || ''}
+                    onChange={(e) => updateField('charging_officer_name', e.target.value)}
+                    className="w-full bg-white border rounded-lg px-3 py-2 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Position
+                  </label>
+                  <input
+                    type="text"
+                    value={payload.charging_officer_position || ''}
+                    onChange={(e) => updateField('charging_officer_position', e.target.value)}
+                    className="w-full bg-white border rounded-lg px-3 py-2 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Date of Charge *
+                  </label>
+                  <input
+                    type="date"
+                    value={payload.date_of_charge ?? payload.incident_date ?? ''}
+                    onChange={(e) => {
+                      updateField('date_of_charge', e.target.value);
+                      updateField('incident_date', e.target.value);
+                    }}
+                    className="w-full bg-white border rounded-lg px-3 py-2 text-sm"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-800 mb-1">
+                  1. Exculpatory Statement Against the Offence Of: *
+                </label>
+                <textarea
+                  rows={2}
+                  value={payload.offence_description ?? payload.charge_reference ?? ''}
+                  onChange={(e) => {
+                    updateField('offence_description', e.target.value);
+                    updateField('charge_reference', e.target.value);
+                  }}
+                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  placeholder="Specify the exact disciplinary charge or alleged offence..."
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-800 mb-1">
+                  2. Statement *
+                </label>
+                <textarea
+                  rows={6}
+                  value={payload.employee_statement || ''}
+                  onChange={(e) => updateField('employee_statement', e.target.value)}
+                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  placeholder="Detail your complete statement, mitigating factors, and exculpatory facts in response to the charge..."
+                />
+              </div>
+            </div>
+          </div>
+        );
+
+      case 'MANPOWER_REQ': {
+        const vacancyType = payload.vacancy_type || 'NEW_POSITION';
+        return (
+          <div className="space-y-5">
+            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-700 block">
+                1. Requisition Header & Vacancy Details
+              </span>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Position Requested For *
+                  </label>
+                  <input
+                    type="text"
+                    value={payload.position_requested ?? payload.position_title ?? ''}
+                    onChange={(e) => {
+                      updateField('position_requested', e.target.value);
+                      updateField('position_title', e.target.value);
+                    }}
+                    placeholder="e.g. Science Teacher (IGCSE Physics)"
+                    className="w-full bg-white border rounded-lg px-3 py-2 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Number of Staff Required *
                   </label>
                   <input
                     type="number"
                     min={1}
-                    value={payload.accrued_months || ''}
-                    onChange={(e) => updateField('accrued_months', Number(e.target.value))}
-                    className="w-full border rounded-lg px-3 py-2 text-sm"
+                    value={payload.number_of_staff_required ?? payload.headcount ?? 1}
+                    onChange={(e) => {
+                      const val = Number(e.target.value);
+                      updateField('number_of_staff_required', val);
+                      updateField('headcount', val);
+                    }}
+                    className="w-full bg-white border rounded-lg px-3 py-2 text-sm"
                   />
                 </div>
-              </>
-            )}
-            <div className="md:col-span-2">
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Reason / Justification for Advance *
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Required Start of Employment *
+                  </label>
+                  <input
+                    type="date"
+                    value={payload.required_start_date ?? payload.target_start_date ?? ''}
+                    onChange={(e) => {
+                      updateField('required_start_date', e.target.value);
+                      updateField('target_start_date', e.target.value);
+                    }}
+                    className="w-full bg-white border rounded-lg px-3 py-2 text-sm"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Vacancy Origin */}
+            <div className="p-4 rounded-xl bg-blue-50/50 border border-blue-200 space-y-3">
+              <label className="block text-xs font-bold text-slate-800">
+                The Vacancy Has Arisen Due To: *
               </label>
-              <textarea
-                rows={3}
-                value={payload.reason || ''}
-                onChange={(e) => updateField('reason', e.target.value)}
-                className="w-full border rounded-lg px-3 py-2 text-sm"
-              />
+              <div className="flex gap-4">
+                <button
+                  type="button"
+                  onClick={() => updateField('vacancy_type', 'REPLACEMENT')}
+                  className={`px-4 py-1.5 rounded-lg text-xs font-bold border transition ${
+                    vacancyType === 'REPLACEMENT'
+                      ? 'bg-blue-600 text-white border-blue-600'
+                      : 'bg-white text-slate-700 border-slate-300'
+                  }`}
+                >
+                  a) Replacement of Staff
+                </button>
+                <button
+                  type="button"
+                  onClick={() => updateField('vacancy_type', 'NEW_POSITION')}
+                  className={`px-4 py-1.5 rounded-lg text-xs font-bold border transition ${
+                    vacancyType === 'NEW_POSITION'
+                      ? 'bg-blue-600 text-white border-blue-600'
+                      : 'bg-white text-slate-700 border-slate-300'
+                  }`}
+                >
+                  b) New Position
+                </button>
+              </div>
+
+              {vacancyType === 'REPLACEMENT' ? (
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                    Replacement of (Staff Name / Former Incumbent) *
+                  </label>
+                  <input
+                    type="text"
+                    value={payload.replacement_of_person || ''}
+                    onChange={(e) => updateField('replacement_of_person', e.target.value)}
+                    placeholder="Enter full name of departing staff member"
+                    className="w-full bg-white border rounded-lg px-3 py-2 text-sm"
+                  />
+                </div>
+              ) : (
+                <div>
+                  <label className="block text-[11px] font-semibold text-slate-700 mb-1">
+                    New Position Due To (Justification / Enrolment Growth) *
+                  </label>
+                  <input
+                    type="text"
+                    value={payload.new_position_reason ?? payload.justification ?? ''}
+                    onChange={(e) => {
+                      updateField('new_position_reason', e.target.value);
+                      updateField('justification', e.target.value);
+                    }}
+                    placeholder="State reason for new headcount..."
+                    className="w-full bg-white border rounded-lg px-3 py-2 text-sm"
+                  />
+                </div>
+              )}
+            </div>
+
+            {/* Budget & Qualifications */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  State Whether or Not Position is Budgeted For *
+                </label>
+                <select
+                  value={payload.is_budgeted || 'YES'}
+                  onChange={(e) => updateField('is_budgeted', e.target.value)}
+                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                >
+                  <option value="YES">Yes, Budgeted</option>
+                  <option value="NO">No, Unbudgeted</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  The Job Holder Reports To *
+                </label>
+                <input
+                  type="text"
+                  value={payload.reports_to || ''}
+                  onChange={(e) => updateField('reports_to', e.target.value)}
+                  placeholder="e.g. Head Teacher / Head of Department"
+                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                />
+              </div>
+
+              <div className="md:col-span-2">
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Consequences of Failure to Fill the Vacancy *
+                </label>
+                <textarea
+                  rows={2}
+                  value={payload.consequences_of_failure_to_fill || ''}
+                  onChange={(e) => updateField('consequences_of_failure_to_fill', e.target.value)}
+                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  placeholder="Operational disruption, compliance breach, timetable uncoverage..."
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Professional Qualifications Required *
+                </label>
+                <textarea
+                  rows={2}
+                  value={payload.professional_qualifications_required || ''}
+                  onChange={(e) => updateField('professional_qualifications_required', e.target.value)}
+                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  placeholder="e.g. Bachelor of Science in Physics with Education, TCZ Registered"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Relevant Field Experience Required *
+                </label>
+                <textarea
+                  rows={2}
+                  value={payload.relevant_field_experience_required || ''}
+                  onChange={(e) => updateField('relevant_field_experience_required', e.target.value)}
+                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  placeholder="e.g. Minimum 3 years teaching Cambridge IGCSE syllabus"
+                />
+              </div>
+
+              <div className="md:col-span-2">
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Summary of the Job Description / Job *
+                </label>
+                <textarea
+                  rows={2}
+                  value={payload.job_description_summary || ''}
+                  onChange={(e) => updateField('job_description_summary', e.target.value)}
+                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Job Description Attached *
+                </label>
+                <select
+                  value={payload.job_description_attached || 'ATTACHED'}
+                  onChange={(e) => updateField('job_description_attached', e.target.value)}
+                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                >
+                  <option value="ATTACHED">Attached</option>
+                  <option value="NOT_ATTACHED">Not Attached</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Preferred Source of Recruitment
+                </label>
+                <input
+                  type="text"
+                  value={payload.preferred_recruitment_source || ''}
+                  onChange={(e) => updateField('preferred_recruitment_source', e.target.value)}
+                  placeholder="e.g. Internal advert, Educore portal, LinkedIn, Agency"
+                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Required Contract Period *
+                </label>
+                <input
+                  type="text"
+                  value={payload.required_contract_period || ''}
+                  onChange={(e) => updateField('required_contract_period', e.target.value)}
+                  placeholder="e.g. 2 Years Fixed-Term / Permanent"
+                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Salary Recommendation (Based on defined salary scale) *
+                </label>
+                <input
+                  type="text"
+                  value={payload.salary_recommendation_zmw || ''}
+                  onChange={(e) => updateField('salary_recommendation_zmw', e.target.value)}
+                  placeholder="e.g. Band 4 / ZMW 25,000"
+                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                />
+              </div>
+
+              <div className="md:col-span-2">
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Any Other Benefits (Based on ES benefit structure)
+                </label>
+                <input
+                  type="text"
+                  value={payload.other_benefits || ''}
+                  onChange={(e) => updateField('other_benefits', e.target.value)}
+                  placeholder="e.g. Subsidised staff housing, Edu-Health membership, child tuition rebate"
+                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                />
+              </div>
+
+              <div className="md:col-span-2">
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Remarks
+                </label>
+                <textarea
+                  rows={2}
+                  value={payload.remarks || ''}
+                  onChange={(e) => updateField('remarks', e.target.value)}
+                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  placeholder="Any additional remarks or hiring timelines..."
+                />
+              </div>
             </div>
           </div>
         );
-
-      case 'BANK_CHANGE':
-        return (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                New Bank Name *
-              </label>
-              <input
-                type="text"
-                placeholder="e.g., Stanbic Bank Zambia"
-                value={payload.bank_name || ''}
-                onChange={(e) => updateField('bank_name', e.target.value)}
-                className="w-full border rounded-lg px-3 py-2 text-sm"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Branch Name *
-              </label>
-              <input
-                type="text"
-                placeholder="e.g., Solwezi Branch"
-                value={payload.branch_name || ''}
-                onChange={(e) => updateField('branch_name', e.target.value)}
-                className="w-full border rounded-lg px-3 py-2 text-sm"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Branch Sort Code
-              </label>
-              <input
-                type="text"
-                placeholder="Optional Sort / SWIFT Code"
-                value={payload.branch_code || ''}
-                onChange={(e) => updateField('branch_code', e.target.value)}
-                className="w-full border rounded-lg px-3 py-2 text-sm"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Account Number *
-              </label>
-              <input
-                type="text"
-                value={payload.account_number || ''}
-                onChange={(e) => updateField('account_number', e.target.value)}
-                className="w-full border rounded-lg px-3 py-2 text-sm"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Account Type *
-              </label>
-              <select
-                value={payload.account_type || 'CURRENT'}
-                onChange={(e) => updateField('account_type', e.target.value)}
-                className="w-full border rounded-lg px-3 py-2 text-sm"
-              >
-                <option value="CURRENT">Current Account</option>
-                <option value="SAVINGS">Savings Account</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Effective Payroll Month
-              </label>
-              <input
-                type="month"
-                value={payload.effective_payroll_month || ''}
-                onChange={(e) => updateField('effective_payroll_month', e.target.value)}
-                className="w-full border rounded-lg px-3 py-2 text-sm"
-              />
-            </div>
-          </div>
-        );
-
-      case 'PROF_DEV':
-        return (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="md:col-span-2">
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Course / Qualification Title *
-              </label>
-              <input
-                type="text"
-                value={payload.course_title || ''}
-                onChange={(e) => updateField('course_title', e.target.value)}
-                className="w-full border rounded-lg px-3 py-2 text-sm"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Training Provider / Institution *
-              </label>
-              <input
-                type="text"
-                value={payload.provider || ''}
-                onChange={(e) => updateField('provider', e.target.value)}
-                className="w-full border rounded-lg px-3 py-2 text-sm"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Total Cost (ZMW) *
-              </label>
-              <input
-                type="number"
-                value={payload.cost_zmw || ''}
-                onChange={(e) => updateField('cost_zmw', Number(e.target.value))}
-                className="w-full border rounded-lg px-3 py-2 text-sm"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Start Date *
-              </label>
-              <input
-                type="date"
-                value={payload.start_date || ''}
-                onChange={(e) => updateField('start_date', e.target.value)}
-                className="w-full border rounded-lg px-3 py-2 text-sm"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Expected Completion Date
-              </label>
-              <input
-                type="date"
-                value={payload.end_date || ''}
-                onChange={(e) => updateField('end_date', e.target.value)}
-                className="w-full border rounded-lg px-3 py-2 text-sm"
-              />
-            </div>
-            <div className="md:col-span-2">
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Relevance to Current Role & School Objectives
-              </label>
-              <textarea
-                rows={3}
-                value={payload.justification || ''}
-                onChange={(e) => updateField('justification', e.target.value)}
-                className="w-full border rounded-lg px-3 py-2 text-sm"
-              />
-            </div>
-          </div>
-        );
-
-      case 'CONTRACT_RENEWAL':
-        return (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Current Contract Expiry Date *
-              </label>
-              <input
-                type="date"
-                value={payload.current_contract_end_date || ''}
-                onChange={(e) => updateField('current_contract_end_date', e.target.value)}
-                className="w-full border rounded-lg px-3 py-2 text-sm"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Proposed Renewal Tenure (Months) *
-              </label>
-              <input
-                type="number"
-                value={payload.proposed_tenure_months || 24}
-                onChange={(e) => updateField('proposed_tenure_months', Number(e.target.value))}
-                className="w-full border rounded-lg px-3 py-2 text-sm"
-              />
-            </div>
-            <div className="md:col-span-2">
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Key Achievements & Performance Self-Appraisal Summary
-              </label>
-              <textarea
-                rows={4}
-                value={payload.performance_summary || ''}
-                onChange={(e) => updateField('performance_summary', e.target.value)}
-                className="w-full border rounded-lg px-3 py-2 text-sm"
-              />
-            </div>
-          </div>
-        );
-
-      case 'EXCULPATORY':
-        return (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Date of Alleged Incident *
-              </label>
-              <input
-                type="date"
-                value={payload.incident_date || ''}
-                onChange={(e) => updateField('incident_date', e.target.value)}
-                className="w-full border rounded-lg px-3 py-2 text-sm"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Charge / Disciplinary Reference *
-              </label>
-              <input
-                type="text"
-                placeholder="e.g., DISC-TRD-2026-09"
-                value={payload.charge_reference || ''}
-                onChange={(e) => updateField('charge_reference', e.target.value)}
-                className="w-full border rounded-lg px-3 py-2 text-sm"
-              />
-            </div>
-            <div className="md:col-span-2">
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Summary of Allegation / Query
-              </label>
-              <input
-                type="text"
-                value={payload.allegation_summary || ''}
-                onChange={(e) => updateField('allegation_summary', e.target.value)}
-                className="w-full border rounded-lg px-3 py-2 text-sm"
-              />
-            </div>
-            <div className="md:col-span-2">
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Employee Exculpatory Statement & Response *
-              </label>
-              <textarea
-                rows={5}
-                value={payload.employee_statement || ''}
-                onChange={(e) => updateField('employee_statement', e.target.value)}
-                className="w-full border rounded-lg px-3 py-2 text-sm"
-              />
-            </div>
-          </div>
-        );
-
-      case 'MANPOWER_REQ':
+      }
 
       case 'EVENT_COMPLETION':
         return (
@@ -1521,12 +2522,15 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  School(s) *
+                  Site(s) *
                 </label>
                 <input
                   type="text"
-                  value={payload.schools || ''}
-                  onChange={(e) => updateField('schools', e.target.value)}
+                  value={payload.sites ?? payload.schools ?? ''}
+                  onChange={(e) => {
+                    updateField('sites', e.target.value);
+                    updateField('schools', e.target.value);
+                  }}
                   className="w-full border rounded-lg px-3 py-2 text-sm"
                 />
               </div>
@@ -1603,7 +2607,7 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
 
             <div className="p-4 rounded-xl bg-blue-50/60 border border-blue-200 text-xs text-slate-700 space-y-2">
               <p className="leading-relaxed">
-                "I confirm that the event costings were prepared, agreed on with finance and communicated by the school with all billing parties (if rechargeable) involved. All necessary documents have been handed in to finance and the event was completed successfully. I further confirm that all Purchase Requisitions (PR) for this event were submitted to the Procurement department."
+                "I confirm that the event costings were prepared, agreed on with finance and communicated by the site with all billing parties (if rechargeable) involved. All necessary documents have been handed in to finance and the event was completed successfully. I further confirm that all Purchase Requisitions (PR) for this event were submitted to the Procurement department."
               </p>
               <label className="flex items-center gap-2 font-bold text-slate-900 cursor-pointer pt-1">
                 <input
@@ -1624,7 +2628,7 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Location / Campus *
+                  Site / Location *
                 </label>
                 <input
                   type="text"
@@ -1650,6 +2654,20 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                   <option value="OTHER">Other</option>
                 </select>
               </div>
+              {payload.inventory_action === 'OTHER' && (
+                <div className="md:col-span-2">
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Specify Other Inventory Action *
+                  </label>
+                  <input
+                    type="text"
+                    value={payload.inventory_action_other || ''}
+                    onChange={(e) => updateField('inventory_action_other', e.target.value)}
+                    placeholder="Specify custom inventory disposition..."
+                    className="w-full border rounded-lg px-3 py-2 text-sm"
+                  />
+                </div>
+              )}
               <div className="md:col-span-2">
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
                   Reason for Return *
@@ -1763,7 +2781,22 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
         const items: any[] = payload.items || [];
         return (
           <div className="space-y-5">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  School / Site *
+                </label>
+                <input
+                  type="text"
+                  value={payload.school || payload.site || ''}
+                  onChange={(e) => {
+                    updateField('school', e.target.value);
+                    updateField('site', e.target.value);
+                  }}
+                  className="w-full border rounded-lg px-3 py-2 text-sm"
+                  placeholder="e.g. Sentinel Kalumbila"
+                />
+              </div>
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
                   Department *
@@ -2111,6 +3144,16 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                 </span>
               </div>
             </div>
+
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-3.5 text-xs text-amber-900 flex items-start gap-2.5">
+              <AlertCircle className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
+              <div>
+                <p className="font-bold text-amber-950">Important Educore Policy Note:</p>
+                <p className="mt-0.5 text-amber-800 leading-relaxed">
+                  Failure to retire imprest and all supporting documents within 7 days after termination / completion of the trip or purchase will result in deduction of the balance from the next payroll and disciplinary action may be taken as stipulated in our Code of Conduct.
+                </p>
+              </div>
+            </div>
           </div>
         );
       }
@@ -2330,174 +3373,307 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
           </div>
         );
       }
+      case 'JOB_DESCRIPTION': {
+        const respAreas = Array.isArray(payload.responsibilities) && payload.responsibilities.length > 0
+          ? payload.responsibilities
+          : [
+              { area_title: 'Core Teaching / Operational Delivery', area_description: '' },
+              { area_title: 'Administrative & Reporting Compliance', area_description: '' },
+            ];
+
+        const updateRespAreas = (nextAreas: { area_title: string; area_description: string }[]) => {
+          setPayload((prev) => ({
+            ...prev,
+            responsibilities: nextAreas,
+            key_responsibilities: nextAreas.map(
+              (a) => `${a.area_title || 'Responsibility'}: ${a.area_description}`
+            ),
+          }));
+        };
+
         return (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Position Title *
-              </label>
-              <input
-                type="text"
-                value={payload.position_title || ''}
-                onChange={(e) => updateField('position_title', e.target.value)}
-                className="w-full border rounded-lg px-3 py-2 text-sm"
-              />
+          <div className="space-y-5">
+            {/* 1. Header Information */}
+            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-700 block">
+                Job Overview & Reporting Structure
+              </span>
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                <div className="md:col-span-2">
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Position Title *
+                  </label>
+                  <input
+                    type="text"
+                    value={payload.position ?? payload.job_title ?? ''}
+                    onChange={(e) => {
+                      updateField('position', e.target.value);
+                      updateField('job_title', e.target.value);
+                    }}
+                    placeholder="e.g. Head of Humanities / Secondary Teacher"
+                    className="w-full bg-white border rounded-lg px-3 py-2 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Location / School *
+                  </label>
+                  <input
+                    type="text"
+                    value={payload.location ?? payload.department ?? ''}
+                    onChange={(e) => {
+                      updateField('location', e.target.value);
+                      updateField('department', e.target.value);
+                    }}
+                    placeholder="e.g. Sentinel Kabitaka"
+                    className="w-full bg-white border rounded-lg px-3 py-2 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Effective Date *
+                  </label>
+                  <input
+                    type="date"
+                    value={payload.effective_date || ''}
+                    onChange={(e) => updateField('effective_date', e.target.value)}
+                    className="w-full bg-white border rounded-lg px-3 py-2 text-sm"
+                  />
+                </div>
+                <div className="md:col-span-4">
+                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    Reports To *
+                  </label>
+                  <input
+                    type="text"
+                    value={payload.reports_to || ''}
+                    onChange={(e) => updateField('reports_to', e.target.value)}
+                    placeholder="e.g. Deputy Head / Head of School"
+                    className="w-full bg-white border rounded-lg px-3 py-2 text-sm"
+                  />
+                </div>
+              </div>
             </div>
+
+            {/* Mission */}
             <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Department / Faculty *
+              <label className="block text-xs font-bold text-slate-800 mb-1">
+                Mission / Job Purpose *
               </label>
-              <input
-                type="text"
-                value={payload.department || ''}
-                onChange={(e) => updateField('department', e.target.value)}
-                className="w-full border rounded-lg px-3 py-2 text-sm"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Headcount Required *
-              </label>
-              <input
-                type="number"
-                min={1}
-                value={payload.headcount || 1}
-                onChange={(e) => updateField('headcount', Number(e.target.value))}
-                className="w-full border rounded-lg px-3 py-2 text-sm"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Contract Type
-              </label>
-              <select
-                value={payload.employment_type || 'FIXED_TERM'}
-                onChange={(e) => updateField('employment_type', e.target.value)}
-                className="w-full border rounded-lg px-3 py-2 text-sm"
-              >
-                <option value="FIXED_TERM">Fixed-Term Contract</option>
-                <option value="PERMANENT">Permanent</option>
-                <option value="TEMPORARY">Temporary / Relief</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Target Start Date
-              </label>
-              <input
-                type="date"
-                value={payload.target_start_date || ''}
-                onChange={(e) => updateField('target_start_date', e.target.value)}
-                className="w-full border rounded-lg px-3 py-2 text-sm"
-              />
-            </div>
-            <div className="md:col-span-2">
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Operational & Budget Justification *
-              </label>
+              <p className="text-[11px] text-slate-500 mb-1">
+                Please describe here the overall mission and core purpose of this job role.
+              </p>
               <textarea
                 rows={3}
-                value={payload.justification || ''}
-                onChange={(e) => updateField('justification', e.target.value)}
+                value={payload.mission || ''}
+                onChange={(e) => updateField('mission', e.target.value)}
+                placeholder="Overall purpose of the position within Educore Services..."
                 className="w-full border rounded-lg px-3 py-2 text-sm"
               />
             </div>
-          </div>
-        );
 
-      case 'JOB_DESCRIPTION':
-      default: {
-        const responsibilities: string[] = Array.isArray(payload.key_responsibilities)
-          ? payload.key_responsibilities
-          : [''];
-        return (
-          <div className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Job Title *
-                </label>
-                <input
-                  type="text"
-                  value={payload.job_title || ''}
-                  onChange={(e) => updateField('job_title', e.target.value)}
-                  className="w-full border rounded-lg px-3 py-2 text-sm"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Department *
-                </label>
-                <input
-                  type="text"
-                  value={payload.department || ''}
-                  onChange={(e) => updateField('department', e.target.value)}
-                  className="w-full border rounded-lg px-3 py-2 text-sm"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Reports To
-                </label>
-                <input
-                  type="text"
-                  value={payload.reports_to || ''}
-                  onChange={(e) => updateField('reports_to', e.target.value)}
-                  className="w-full border rounded-lg px-3 py-2 text-sm"
-                />
+            {/* Job Criteria 1 to 5 */}
+            <div className="bg-blue-50/40 p-4 rounded-xl border border-blue-200/80 space-y-4">
+              <span className="text-xs font-bold uppercase tracking-wider text-blue-900 block">
+                Job Specifications & Criteria
+              </span>
+
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-800 mb-1">
+                    1. Education Criteria *
+                  </label>
+                  <p className="text-[11px] text-slate-500 mb-1">
+                    Indicate the minimal education required to perform this role and preferred qualifications.
+                  </p>
+                  <textarea
+                    rows={2}
+                    value={payload.education_criteria || ''}
+                    onChange={(e) => updateField('education_criteria', e.target.value)}
+                    placeholder="e.g. Bachelor's Degree in relevant discipline with Teaching Diploma / TCZ registration..."
+                    className="w-full bg-white border rounded-lg px-3 py-2 text-sm"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-800 mb-1">
+                    2. Experience Criteria *
+                  </label>
+                  <p className="text-[11px] text-slate-500 mb-1">
+                    State areas and years the candidate should have previously worked for the role to be done effectively.
+                  </p>
+                  <textarea
+                    rows={2}
+                    value={payload.experience_criteria || ''}
+                    onChange={(e) => updateField('experience_criteria', e.target.value)}
+                    placeholder="e.g. Minimum 3-5 years teaching Cambridge IGCSE / A-Level curriculum..."
+                    className="w-full bg-white border rounded-lg px-3 py-2 text-sm"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-800 mb-1">
+                    3. Available Tools *
+                  </label>
+                  <p className="text-[11px] text-slate-500 mb-1">
+                    State tools and software required to perform the job (e.g. computer, laboratory apparatus, ERP).
+                  </p>
+                  <input
+                    type="text"
+                    value={payload.available_tools || ''}
+                    onChange={(e) => updateField('available_tools', e.target.value)}
+                    placeholder="e.g. Laptop, Google Workspace, Educore Portal, SMART Board"
+                    className="w-full bg-white border rounded-lg px-3 py-2 text-sm"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-800 mb-1">
+                    4. Qualities *
+                  </label>
+                  <p className="text-[11px] text-slate-500 mb-1">
+                    Individual traits required to perform duties well (e.g. interpersonal skills, self-motivation, high integrity).
+                  </p>
+                  <textarea
+                    rows={2}
+                    value={payload.qualities || ''}
+                    onChange={(e) => updateField('qualities', e.target.value)}
+                    placeholder="e.g. High emotional intelligence, collaborative, punctual, resilient..."
+                    className="w-full bg-white border rounded-lg px-3 py-2 text-sm"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-800 mb-1">
+                    5. Organisation & Reporting *
+                  </label>
+                  <p className="text-[11px] text-slate-500 mb-1">
+                    State clearly where the role fits in the organisation, authority limits (budgeting, staff appraisal), and immediate subordinates.
+                  </p>
+                  <textarea
+                    rows={2}
+                    value={payload.organisation_and_reporting || ''}
+                    onChange={(e) => updateField('organisation_and_reporting', e.target.value)}
+                    placeholder="Role placement, supervisory authority, list of direct subordinates by title..."
+                    className="w-full bg-white border rounded-lg px-3 py-2 text-sm"
+                  />
+                </div>
               </div>
             </div>
 
-            <div className="space-y-2">
+            {/* Section 6: Responsibilities (6.1, 6.2, 6.3...) */}
+            <div className="space-y-3">
               <div className="flex justify-between items-center">
-                <label className="text-xs font-semibold text-slate-700">
-                  Key Responsibilities & Duties *
-                </label>
+                <div>
+                  <label className="text-xs font-bold text-slate-800 block">
+                    6. Key Responsibilities & Duty Areas *
+                  </label>
+                  <p className="text-[11px] text-slate-500">
+                    Define distinct responsibility areas (6.1, 6.2, ...) with detailed descriptions.
+                  </p>
+                </div>
                 <button
                   type="button"
                   onClick={() =>
-                    updateField('key_responsibilities', [...responsibilities, ''])
+                    updateRespAreas([
+                      ...respAreas,
+                      { area_title: `Responsibility Area ${respAreas.length + 1}`, area_description: '' },
+                    ])
                   }
-                  className="inline-flex items-center gap-1 text-xs font-semibold text-blue-600 hover:text-blue-800"
+                  className="inline-flex items-center gap-1 text-xs font-bold text-blue-600 hover:text-blue-800 bg-blue-50 px-3 py-1.5 rounded-lg border border-blue-200"
                 >
-                  <Plus className="w-3.5 h-3.5" /> Add Responsibility
+                  <Plus className="w-3.5 h-3.5" /> Add Duty Area
                 </button>
               </div>
-              {responsibilities.map((resp, idx) => (
-                <div key={idx} className="flex items-center gap-2">
-                  <span className="text-xs font-bold text-slate-400 w-5">
-                    {idx + 1}.
-                  </span>
+
+              {respAreas.map((area: any, idx: number) => (
+                <div key={idx} className="p-3.5 rounded-xl border border-slate-200 bg-slate-50 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-blue-800">
+                      6.{idx + 1} Responsibility Area Title
+                    </span>
+                    <button
+                      type="button"
+                      disabled={respAreas.length <= 1}
+                      onClick={() =>
+                        updateRespAreas(respAreas.filter((_: any, i: number) => i !== idx))
+                      }
+                      className="text-red-500 hover:text-red-700 disabled:opacity-30"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
                   <input
                     type="text"
-                    placeholder="Describe key duty or deliverable..."
-                    value={resp}
+                    value={area.area_title || ''}
                     onChange={(e) => {
-                      const next = [...responsibilities];
-                      next[idx] = e.target.value;
-                      updateField('key_responsibilities', next);
+                      const next = [...respAreas];
+                      next[idx] = { ...next[idx], area_title: e.target.value };
+                      updateRespAreas(next);
                     }}
-                    className="flex-1 border rounded-lg px-3 py-1.5 text-xs"
+                    placeholder={`e.g. Curriculum Delivery & Student Assessment`}
+                    className="w-full bg-white border rounded-lg px-3 py-1.5 text-xs font-medium"
                   />
-                  <button
-                    type="button"
-                    disabled={responsibilities.length <= 1}
-                    onClick={() =>
-                      updateField(
-                        'key_responsibilities',
-                        responsibilities.filter((_, i) => i !== idx)
-                      )
-                    }
-                    className="text-red-500 hover:text-red-700 disabled:opacity-30"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                      Description of Responsibility
+                    </label>
+                    <textarea
+                      rows={2}
+                      value={area.area_description || ''}
+                      onChange={(e) => {
+                        const next = [...respAreas];
+                        next[idx] = { ...next[idx], area_description: e.target.value };
+                        updateRespAreas(next);
+                      }}
+                      placeholder="Detail specific tasks, standards, and deliverables for this area..."
+                      className="w-full bg-white border rounded-lg px-3 py-2 text-xs"
+                    />
+                  </div>
                 </div>
               ))}
+            </div>
+
+            {/* Section 6.5: Assessed Performance */}
+            <div>
+              <label className="block text-xs font-bold text-slate-800 mb-1">
+                Assessed Performance Standards *
+              </label>
+              <textarea
+                rows={2}
+                value={payload.assessed_performance || ''}
+                onChange={(e) => updateField('assessed_performance', e.target.value)}
+                placeholder="Indicate key performance indicators (KPIs) and appraisal framework..."
+                className="w-full border rounded-lg px-3 py-2 text-sm"
+              />
+            </div>
+
+            {/* Section 7: Annex */}
+            <div className="flex items-start gap-3 p-3 rounded-xl bg-slate-50 border border-slate-200">
+              <input
+                type="checkbox"
+                id="annex_chart"
+                checked={payload.annex_org_chart_attached ?? true}
+                onChange={(e) => updateField('annex_org_chart_attached', e.target.checked)}
+                className="mt-0.5 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+              />
+              <label htmlFor="annex_chart" className="text-xs text-slate-700 cursor-pointer">
+                <strong>7. Annex: Organisation Chart Attached</strong>
+                <p className="text-[11px] text-slate-500">
+                  Confirms that an up-to-date organisational organogram is attached / on file with HR.
+                </p>
+              </label>
             </div>
           </div>
         );
       }
+
+      default:
+        return (
+          <div className="p-4 bg-slate-50 border rounded-lg text-xs text-slate-600">
+            Please fill in the form details below.
+          </div>
+        );
 
       case 'DISCIPLINARY_CHARGE':
         return (
@@ -2532,12 +3708,15 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    School / Campus *
+                    Site *
                   </label>
                   <input
                     type="text"
-                    value={payload.charging_school || ''}
-                    onChange={(e) => updateField('charging_school', e.target.value)}
+                    value={payload.charging_site ?? payload.charging_school ?? ''}
+                    onChange={(e) => {
+                      updateField('charging_site', e.target.value);
+                      updateField('charging_school', e.target.value);
+                    }}
                     className="w-full bg-white border rounded-lg px-3 py-2 text-sm"
                   />
                 </div>
@@ -2586,12 +3765,15 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                 </div>
                 <div className="md:col-span-2">
                   <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Dept / School *
+                    Department / Site *
                   </label>
                   <input
                     type="text"
-                    value={payload.accused_dept_school || ''}
-                    onChange={(e) => updateField('accused_dept_school', e.target.value)}
+                    value={payload.accused_dept_site ?? payload.accused_dept_school ?? ''}
+                    onChange={(e) => {
+                      updateField('accused_dept_site', e.target.value);
+                      updateField('accused_dept_school', e.target.value);
+                    }}
                     className="w-full bg-white border rounded-lg px-3 py-2 text-sm"
                   />
                 </div>
@@ -3055,21 +4237,33 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
   };
 
   return (
-    <div className="max-w-6xl mx-auto space-y-5">
+    <div className="max-w-6xl mx-auto space-y-5 pb-8">
       {/* Top Breadcrumb Bar (Matches 3.png) */}
-      <div className="flex items-center gap-2 text-xs text-slate-500 font-medium">
-        <span className="font-mono text-slate-400 font-bold">&lt;&gt;</span>
-        <button
-          type="button"
-          onClick={onCancel}
-          className="hover:text-blue-600 transition cursor-pointer"
-        >
-          My Applications
-        </button>
-        <span>/</span>
-        <span className="text-slate-700 font-semibold">
-          {step === 1 ? 'New Request' : selectedForm?.title || 'Form Submission'}
-        </span>
+      <div className="flex items-center justify-between text-xs text-slate-500 font-medium px-0.5">
+        <div className="flex items-center gap-2">
+          <span className="font-mono text-slate-400 font-bold">&lt;&gt;</span>
+          <button
+            type="button"
+            onClick={onCancel}
+            className="hover:text-blue-600 transition cursor-pointer"
+          >
+            My Applications
+          </button>
+          <span>/</span>
+          <span className="text-slate-700 font-semibold">
+            {step === 1 ? 'New Request' : selectedForm?.title || 'Form Submission'}
+          </span>
+        </div>
+        {onCancel && (
+          <button
+            type="button"
+            onClick={onCancel}
+            aria-label="Close dialog"
+            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-200/60 transition cursor-pointer"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        )}
       </div>
 
       {/* Main Header with Back Button and Actions (Matches 3.png) */}
@@ -3319,9 +4513,9 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
                 </div>
 
                 <div className="flex justify-between items-center text-slate-600 py-1 border-b border-slate-50">
-                  <span className="text-slate-500">Institution:</span>
+                  <span className="text-slate-500">Site:</span>
                   <span className="font-semibold text-slate-800 truncate max-w-[150px]">
-                    {currentUser?.institution_name || 'Educore'}
+                    {currentUser?.site_name || 'Educore'}
                   </span>
                 </div>
               </div>
@@ -3358,7 +4552,7 @@ export const NewRequestStepper: React.FC<NewRequestStepperProps> = ({
               Policy Agreement &amp; Digital Sign-off
             </h2>
             <p className="text-xs text-slate-500 mt-0.5">
-              Review institutional statutory compliance policies and sign digitally to submit.
+              Review site statutory compliance policies and sign digitally to submit.
             </p>
           </div>
 

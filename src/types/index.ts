@@ -110,7 +110,7 @@ export type EduHealthCategory =
 // 2. REFERENCE CATALOG ENTITIES
 // ============================================================================
 
-export interface Institution {
+export interface Site {
   id: string;
   code: string;
   name: string;
@@ -121,9 +121,9 @@ export interface Institution {
 export interface UserProfile {
   id: string;
   entra_oid: string;
-  institution_id: string;
-  institution_name?: string;
-  institution_code?: string;
+  site_id: string;
+  site_name?: string;
+  site_code?: string;
   employee_number: string;
   full_name: string;
   email: string;
@@ -162,7 +162,7 @@ export interface WorkflowPipelineStep {
   step_order: number;
   role: UserRole;
   label: string;
-  institution_scoped: boolean;
+  site_scoped: boolean;
 }
 
 export interface FormDefinition {
@@ -209,6 +209,10 @@ export interface SalaryAdvancePayload {
   proposed_instalment_zmw: number;
   repayment_period_from: string;
   repayment_period_to: string;
+  // Backward compatibility keys
+  requested_amount_zmw?: number;
+  repayment_months?: number;
+  current_net_pay_zmw?: number;
 }
 
 // HR 2: Application for Professional Development.docx
@@ -222,11 +226,20 @@ export interface ProfDevPayload {
   travel_expenses_zmw: number;
   total_costs_zmw: number;
   details_attached?: boolean;
+  supervisor_impact_rating?: 'VERY_HIGH' | 'HIGH' | 'MEDIUM' | 'LOW' | 'VERY_LOW';
+  // Backward compatibility keys
+  course_title?: string;
+  provider?: string;
+  cost_zmw?: number;
+  start_date?: string;
+  end_date?: string;
+  justification?: string;
 }
 
 // HR 3: Change of Bank Details.docx
 export interface BankChangePayload {
   dept_or_school: string;
+  dept_or_site?: string;
   phone: string;
   date_of_birth: string;
   marital_status: string;
@@ -258,6 +271,13 @@ export interface BankChangePayload {
   intl_state?: string;
   intl_country?: string;
   intl_post_code?: string;
+  // Backward compatibility keys
+  bank_name?: string;
+  branch_name?: string;
+  branch_code?: string;
+  account_number?: string;
+  account_type?: string;
+  effective_payroll_month?: string;
 }
 
 // HR 4: Contract Renewal Form for HR.docx
@@ -266,31 +286,33 @@ export interface ContractRenewalPayload {
   position: string;
   supervisor_name: string;
   school_or_department: string;
+  site_or_department?: string;
   contract_start_date: string;
   contract_end_date: string;
   contract_to_be_renewed: 'YES' | 'NO';
   renewal_reasons: string[]; // 1., 2., 3. target progress reasons
   performance_assessment_attached: 'YES' | 'NO';
   performance_remarks?: string;
+  // Backward compatibility keys
+  current_contract_end_date?: string;
+  proposed_tenure_months?: number;
+  performance_summary?: string;
 }
 
 // HR 5: Educore Staff Child Admission Authorisation Form 2025.docx
 export interface ChildAdmissionEntry {
-  child_name: string;
-  school: string;
-  year_group: string;
-}
-
-export interface ChildAdmissionEntry {
   child_full_name: string;
   date_of_birth: string;
-  target_school_id: string;
+  target_site_id: string;
   year_group: string;
   admission_term: 'TERM_1' | 'TERM_2' | 'TERM_3';
   fee_rebate_percentage: number;
 }
 
 export interface ChildAdmissionPayload {
+  staff_name?: string;
+  site?: string;
+  job_title?: string;
   academic_year: string;
   staff_tenure_years?: number;
   children: ChildAdmissionEntry[];
@@ -303,11 +325,16 @@ export interface ExculpatoryPayload {
   accused_position: string;
   accused_employee_number: string;
   dept_or_school: string;
+  dept_or_site?: string;
   charging_officer_name: string;
   charging_officer_position: string;
   date_of_charge: string;
   offence_description: string; // 1. Exculpatory statement against the offence of:
   employee_statement: string;  // 2. Statement
+  // Backward compatibility keys
+  incident_date?: string;
+  charge_reference?: string;
+  allegation_summary?: string;
 }
 
 // HR 7: Gratuity advance application form- Annual.docx
@@ -317,6 +344,10 @@ export interface GratuityAdvancePayload {
   annual_gratuity_accrued_zmw: number;
   reason: string;
   contract_end_date: string;
+  // Backward compatibility keys
+  requested_amount_zmw?: number;
+  contract_start_date?: string;
+  accrued_months?: number;
 }
 
 // HR 8: Job Description.docx
@@ -339,6 +370,10 @@ export interface JobDescriptionPayload {
   responsibilities: JobResponsibilityArea[]; // 6.1 - 6.4 Responsibility areas
   assessed_performance: string;             // 6.3/6.5 Assessed Performance
   annex_org_chart_attached: boolean;        // 7. Annex: attach organisation chart
+  // Backward compatibility keys
+  job_title?: string;
+  department?: string;
+  key_responsibilities?: string[];
 }
 
 // HR 9: Manpower Requisition Form.docx
@@ -361,9 +396,16 @@ export interface ManpowerReqPayload {
   remarks?: string;
   salary_recommendation_zmw: string;
   other_benefits?: string;
+  // Backward compatibility keys
+  position_title?: string;
+  department?: string;
+  headcount?: number;
+  employment_type?: string;
+  target_start_date?: string;
+  justification?: string;
 }
 
-// Logistics & Finance (Awaiting your next batch upload for exact fields)
+// Logistics & Finance
 export interface TravelRequestPayload {
   cost_code: string;
   contact_number: string;
@@ -385,6 +427,7 @@ export interface TravelRequestPayload {
 
 export interface EventCompletionPayload {
   schools: string;
+  sites?: string;
   event_name: string;
   event_type: string;
   event_coordinator: string;
@@ -418,9 +461,13 @@ export interface StoresReqItem {
 }
 
 export interface StoresReqPayload {
+  school?: string;
+  site?: string;
   department: string;
   purchase_order_no?: string;
   purpose: string;
+  requisition_no?: string;
+  date?: string;
   items: StoresReqItem[];
 }
 
@@ -440,6 +487,8 @@ export interface ExpenseRetirementPayload {
   total_requested: number;
   total_retired: number;
   balance: number; // total_requested - total_retired
+  requisition_no?: string;
+  date?: string;
 }
 
 export interface PurchaseReqLineItem {
@@ -447,7 +496,7 @@ export interface PurchaseReqLineItem {
   cost_code: string;
   needed_by: string;
   qty: number;
-  unit_cost:number;
+  unit_cost: number;
 }
 
 export interface PurchaseReqPayload {
@@ -460,16 +509,20 @@ export interface PurchaseReqPayload {
   items: PurchaseReqLineItem[];
   total_cost: number;
   variance_to_budget: number; // available_budget - total_cost
+  requisition_no?: string;
+  date?: string;
 }
 
 export interface DisciplinaryChargePayload {
   charging_officer_name: string;
   charging_officer_position: string;
   charging_school: string;
+  charging_site?: string;
   accused_name: string;
   accused_position: string;
   accused_man_no: string;
   accused_dept_school: string;
+  accused_dept_site?: string;
   date_of_charge: string;
   nature_of_offence: string;       // 1. Nature of the Offence (As per code of conduct)
   brief_account_of_offence: string; // 2. Brief Account of the Offence (As per investigation done)
@@ -546,7 +599,7 @@ export interface ApplicationApprovalStep {
   step_order: number;
   step_label: string;
   required_role: UserRole;
-  institution_scoped: boolean;
+  site_scoped: boolean;
   status: ApprovalStepStatus;
   reviewer_id?: string | null;
   reviewer_name?: string | null;
@@ -581,8 +634,9 @@ export interface WorkflowApplication<K extends FormCode = FormCode> {
   applicant_name: string;
   applicant_employee_number: string;
   applicant_email: string;
-  institution_id: string;
-  institution_name: string;
+  site_id: string;
+  site_name: string;
+  site_code?: string;
   status: LifecycleStatus;
   current_step_order: number | null;
   current_approver_role: UserRole | null;
@@ -599,11 +653,109 @@ export interface WorkflowApplication<K extends FormCode = FormCode> {
   updated_at: string;
 }
 
+// ============================================================================
+// 5. LEAST-PRIVILEGE & SITE-BOUND INVOLVEMENT HELPERS
+// ============================================================================
+
+export const ROLE_LABELS: Record<UserRole, string> = {
+  APPLICANT: 'Staff / Applicant',
+  LINE_MANAGER: 'Line Manager',
+  HEAD_TEACHER: 'Head Teacher / Site Head',
+  HR_OFFICER: 'HR Officer',
+  HR_MANAGER: 'HR Manager',
+  IT_MANAGER: 'IT Manager',
+  FINANCE_MANAGER: 'Finance Manager',
+  LOGISTICS_MANAGER: 'Logistics Manager',
+  EXECUTIVE_HEAD: 'Executive Head',
+  COO: 'Chief Operating Officer',
+  SUPER_ADMIN: 'System Administrator',
+};
+
+/**
+ * Enforces strict Least-Privilege and Site-Bound access on the client:
+ * - An Applicant only sees applications where `applicant_id === user.id` and `site_id === user.site_id`.
+ * - A Reviewer only sees non-draft applications where their role or ID is in the application's
+ *   approval pipeline AND the application belongs to their assigned site (unless the step is
+ *   central/non-site-scoped and the user belongs to CENTRAL).
+ * - Central Super Admin (`SUPER_ADMIN` at `CENTRAL`) has global oversight.
+ */
+export function isUserInvolvedInApplication(
+  app: WorkflowApplication,
+  user: UserProfile | null
+): boolean {
+  if (!user) return false;
+
+  const isCentralUser = user.site_code === 'CENTRAL';
+
+  if (user.role === 'SUPER_ADMIN' && isCentralUser) {
+    return true;
+  }
+
+  // Direct applicant ownership (site-bound)
+  if (app.applicant_id === user.id && app.site_id === user.site_id) {
+    return true;
+  }
+
+  if (app.status === 'DRAFT') {
+    return false;
+  }
+
+  const approvals = app.approvals || [];
+  return approvals.some((step) => {
+    const isStepReviewer = step.reviewer_id === user.id;
+    const isStepRole = step.required_role === user.role;
+    if (!isStepReviewer && !isStepRole) return false;
+
+    const isSiteScopedStep = step.site_scoped !== false;
+    if (isSiteScopedStep || !isCentralUser) {
+      return app.site_id === user.site_id;
+    }
+    return true;
+  });
+}
+
+/**
+ * Checks whether the current user is the active approver who must sign off right now.
+ * Governance Rules:
+ * - High privilege oversight roles (e.g. SUPER_ADMIN) have read-only oversight across all applications,
+ *   and CANNOT sign off on approval steps that do not designate them.
+ * - Conflict of Interest: Applicants cannot sign off on or approve their own applications.
+ * - Non-central approvers or site-scoped steps require app.site_id === user.site_id.
+ */
+export function isAwaitingUserSignOff(
+  app: WorkflowApplication,
+  user: UserProfile | null
+): boolean {
+  if (!user || app.status !== 'IN_REVIEW') return false;
+  const isCentralUser = user.site_code === 'CENTRAL';
+
+  // Conflict of interest: Applicants cannot sign off on or approve their own applications
+  if (app.applicant_id === user.id) {
+    return false;
+  }
+
+  // Exact role match required: System Administrator / oversight roles cannot sign off
+  // on behalf of other roles (e.g. Head Teacher, HR, Finance).
+  if (app.current_approver_role !== user.role) {
+    return false;
+  }
+
+  const activeStep = (app.approvals || []).find(
+    (s) => s.step_order === app.current_step_order
+  );
+  const isSiteScopedStep = activeStep ? activeStep.site_scoped !== false : !isCentralUser;
+
+  if (isSiteScopedStep || !isCentralUser) {
+    return app.site_id === user.site_id;
+  }
+  return true;
+}
+
 export interface LegacyPurchaseApplication {
   id: string;
   reference_number: string;
   applicant_id: string;
-  institution_id: string;
+  site_id: string;
   status: LegacyApplicationStatus;
   policy_version_id: string;
   legal_text_snapshot: string;

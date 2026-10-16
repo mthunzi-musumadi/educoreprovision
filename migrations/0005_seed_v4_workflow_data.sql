@@ -6,7 +6,7 @@ BEGIN;
 TRUNCATE TABLE public.approval_audit_logs, public.application_approvals, public.applications, public.users CASCADE;
 
 -- 2. ENSURE CORE EDUCORE INSTITUTIONS EXIST
-INSERT INTO public.institutions (code, name, location, is_active) VALUES
+INSERT INTO public.sites (code, name, location, is_active) VALUES
   ('TRIDENT_COLLEGE', 'Trident College', 'Solwezi, Northwestern Province', true),
   ('SENTINEL_KABITAKA', 'Sentinel Kabitaka', 'Solwezi, Northwestern Province', true),
   ('FRONTIER_SCHOOL', 'Frontier School', 'Kalumbila, Northwestern Province', true),
@@ -60,11 +60,11 @@ SET is_active = true;
 
 -- 5. SEED 10 DETERMINISTIC USER PERSONAS COVERING ALL 8 ROLES
 INSERT INTO public.users (
-  entra_oid, institution_id, employee_number, full_name, email, role, department, job_title, is_active
+  entra_oid, site_id, employee_number, full_name, email, role, department, job_title, is_active
 ) VALUES
   (
     '11111111-1111-4111-8111-111111111101'::uuid,
-    (SELECT id FROM public.institutions WHERE code = 'TRIDENT_COLLEGE'),
+    (SELECT id FROM public.sites WHERE code = 'TRIDENT_COLLEGE'),
     'EDC-1042',
     'Chanda Mwamba',
     'cmwamba@trident-college.com',
@@ -75,7 +75,7 @@ INSERT INTO public.users (
   ),
   (
     '11111111-1111-4111-8111-111111111102'::uuid,
-    (SELECT id FROM public.institutions WHERE code = 'SENTINEL_KABITAKA'),
+    (SELECT id FROM public.sites WHERE code = 'SENTINEL_KABITAKA'),
     'EDC-2088',
     'Mutale Bwalya',
     'mbwalya@sentinel-kabitaka.com',
@@ -86,7 +86,7 @@ INSERT INTO public.users (
   ),
   (
     '22222222-2222-4222-8222-222222222201'::uuid,
-    (SELECT id FROM public.institutions WHERE code = 'TRIDENT_COLLEGE'),
+    (SELECT id FROM public.sites WHERE code = 'TRIDENT_COLLEGE'),
     'EDC-1015',
     'Kelvin Zulu',
     'kzulu@trident-college.com',
@@ -97,7 +97,7 @@ INSERT INTO public.users (
   ),
   (
     '33333333-3333-4333-8333-333333333301'::uuid,
-    (SELECT id FROM public.institutions WHERE code = 'TRIDENT_COLLEGE'),
+    (SELECT id FROM public.sites WHERE code = 'TRIDENT_COLLEGE'),
     'EDC-1001',
     'Blair Kuhn',
     'bkuhn@trident-college.com',
@@ -108,7 +108,7 @@ INSERT INTO public.users (
   ),
   (
     '33333333-3333-4333-8333-333333333302'::uuid,
-    (SELECT id FROM public.institutions WHERE code = 'SENTINEL_KABITAKA'),
+    (SELECT id FROM public.sites WHERE code = 'SENTINEL_KABITAKA'),
     'EDC-2001',
     'Jane Mwanza',
     'jmwanza@sentinel-kabitaka.com',
@@ -119,7 +119,7 @@ INSERT INTO public.users (
   ),
   (
     '44444444-4444-4444-8444-444444444401'::uuid,
-    (SELECT id FROM public.institutions WHERE code = 'EDUCORE_CENTRAL'),
+    (SELECT id FROM public.sites WHERE code = 'EDUCORE_CENTRAL'),
     'EDC-0012',
     'Thandiwe Phiri',
     'tphiri@educoreservices.com',
@@ -130,7 +130,7 @@ INSERT INTO public.users (
   ),
   (
     '55555555-5555-4555-8555-555555555501'::uuid,
-    (SELECT id FROM public.institutions WHERE code = 'EDUCORE_CENTRAL'),
+    (SELECT id FROM public.sites WHERE code = 'EDUCORE_CENTRAL'),
     'EDC-0025',
     'Mulenga Banda',
     'mbanda@educoreservices.com',
@@ -141,7 +141,7 @@ INSERT INTO public.users (
   ),
   (
     '66666666-6666-4666-8666-666666666601'::uuid,
-    (SELECT id FROM public.institutions WHERE code = 'EDUCORE_CENTRAL'),
+    (SELECT id FROM public.sites WHERE code = 'EDUCORE_CENTRAL'),
     'EDC-0031',
     'Lombe Kasonde',
     'lkasonde@educoreservices.com',
@@ -152,7 +152,7 @@ INSERT INTO public.users (
   ),
   (
     '77777777-7777-4777-8777-777777777701'::uuid,
-    (SELECT id FROM public.institutions WHERE code = 'EDUCORE_CENTRAL'),
+    (SELECT id FROM public.sites WHERE code = 'EDUCORE_CENTRAL'),
     'EDC-0044',
     'Dambo Simwanza',
     'dsimwanza@educoreservices.com',
@@ -163,7 +163,7 @@ INSERT INTO public.users (
   ),
   (
     '99999999-9999-4999-8999-999999999901'::uuid,
-    (SELECT id FROM public.institutions WHERE code = 'EDUCORE_CENTRAL'),
+    (SELECT id FROM public.sites WHERE code = 'EDUCORE_CENTRAL'),
     'EDC-0001',
     'Mthunzi Musumadi',
     'admin@educoreservices.com',
@@ -178,14 +178,14 @@ UPDATE public.form_definitions SET seq_counter = 0;
 
 -- Sample 1: ICT Laptop Purchase (Awaiting Head Teacher Step 1)
 INSERT INTO public.applications (
-    form_definition_id, applicant_id, institution_id, status,
+    form_definition_id, applicant_id, site_id, status,
     current_step_order, current_approver_role,
     policy_version_id, legal_text_snapshot, terms_accepted, terms_accepted_at,
     applicant_signed_at, applicant_digital_signature, payload
 ) VALUES (
     (SELECT id FROM public.form_definitions WHERE code = 'ICT_PURCHASE'),
     (SELECT id FROM public.users WHERE entra_oid = '11111111-1111-4111-8111-111111111101'::uuid),
-    (SELECT id FROM public.institutions WHERE code = 'TRIDENT_COLLEGE'),
+    (SELECT id FROM public.sites WHERE code = 'TRIDENT_COLLEGE'),
     'IN_REVIEW'::public.lifecycle_status,
     1,
     'HEAD_TEACHER'::public.user_role,
@@ -204,13 +204,13 @@ INSERT INTO public.applications (
 
 -- Sample 2: Travel Request Form (Awaiting Head Teacher Step 1)
 INSERT INTO public.applications (
-    form_definition_id, applicant_id, institution_id, status,
+    form_definition_id, applicant_id, site_id, status,
     current_step_order, current_approver_role,
     terms_accepted, applicant_signed_at, applicant_digital_signature, payload
 ) VALUES (
     (SELECT id FROM public.form_definitions WHERE code = 'TRAVEL_REQUEST'),
     (SELECT id FROM public.users WHERE entra_oid = '11111111-1111-4111-8111-111111111101'::uuid),
-    (SELECT id FROM public.institutions WHERE code = 'TRIDENT_COLLEGE'),
+    (SELECT id FROM public.sites WHERE code = 'TRIDENT_COLLEGE'),
     'IN_REVIEW'::public.lifecycle_status,
     1,
     'HEAD_TEACHER'::public.user_role,
@@ -229,13 +229,13 @@ INSERT INTO public.applications (
 
 -- Sample 3: Change of Bank Details (Awaiting HR Manager Step 1 directly)
 INSERT INTO public.applications (
-    form_definition_id, applicant_id, institution_id, status,
+    form_definition_id, applicant_id, site_id, status,
     current_step_order, current_approver_role,
     terms_accepted, applicant_signed_at, applicant_digital_signature, payload
 ) VALUES (
     (SELECT id FROM public.form_definitions WHERE code = 'BANK_CHANGE'),
     (SELECT id FROM public.users WHERE entra_oid = '11111111-1111-4111-8111-111111111101'::uuid),
-    (SELECT id FROM public.institutions WHERE code = 'TRIDENT_COLLEGE'),
+    (SELECT id FROM public.sites WHERE code = 'TRIDENT_COLLEGE'),
     'IN_REVIEW'::public.lifecycle_status,
     1,
     'HR_MANAGER'::public.user_role,
@@ -252,13 +252,13 @@ INSERT INTO public.applications (
 
 -- Sample 4: Exculpatory Form (Awaiting Line Manager Step 1)
 INSERT INTO public.applications (
-    form_definition_id, applicant_id, institution_id, status,
+    form_definition_id, applicant_id, site_id, status,
     current_step_order, current_approver_role,
     terms_accepted, applicant_signed_at, applicant_digital_signature, payload
 ) VALUES (
     (SELECT id FROM public.form_definitions WHERE code = 'EXCULPATORY'),
     (SELECT id FROM public.users WHERE entra_oid = '11111111-1111-4111-8111-111111111101'::uuid),
-    (SELECT id FROM public.institutions WHERE code = 'TRIDENT_COLLEGE'),
+    (SELECT id FROM public.sites WHERE code = 'TRIDENT_COLLEGE'),
     'IN_REVIEW'::public.lifecycle_status,
     1,
     'LINE_MANAGER'::public.user_role,

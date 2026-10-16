@@ -59,7 +59,7 @@ CREATE TABLE public.applications (
     reference_number varchar(50) NOT NULL UNIQUE,
     form_definition_id uuid NOT NULL REFERENCES public.form_definitions(id) ON DELETE RESTRICT,
     applicant_id uuid NOT NULL REFERENCES public.users(id) ON DELETE RESTRICT,
-    institution_id uuid NOT NULL REFERENCES public.institutions(id) ON DELETE RESTRICT,
+    site_id uuid NOT NULL REFERENCES public.sites(id) ON DELETE RESTRICT,
     
     status public."lifecycle_status" DEFAULT 'DRAFT'::lifecycle_status NOT NULL,
     current_step_order int2 NULL,
@@ -87,8 +87,8 @@ CREATE TABLE public.applications (
 
 CREATE INDEX idx_apps_form_def ON public.applications USING btree (form_definition_id);
 CREATE INDEX idx_apps_applicant ON public.applications USING btree (applicant_id);
-CREATE INDEX idx_apps_institution ON public.applications USING btree (institution_id);
-CREATE INDEX idx_apps_status_queue ON public.applications USING btree (status, current_approver_role, institution_id);
+CREATE INDEX idx_apps_institution ON public.applications USING btree (site_id);
+CREATE INDEX idx_apps_status_queue ON public.applications USING btree (status, current_approver_role, site_id);
 CREATE INDEX idx_apps_payload_gin ON public.applications USING gin (payload);
 
 -- 5. NORMALIZED APPROVAL STEPS TABLE
@@ -98,7 +98,7 @@ CREATE TABLE public.application_approvals (
     step_order int2 NOT NULL,
     step_label varchar(100) NOT NULL,
     required_role public."user_role" NOT NULL,
-    institution_scoped bool DEFAULT false NOT NULL,
+    site_scoped bool DEFAULT false NOT NULL,
     status public."approval_step_status" DEFAULT 'PENDING'::approval_step_status NOT NULL,
     
     reviewer_id uuid NULL REFERENCES public.users(id) ON DELETE RESTRICT,
@@ -191,13 +191,13 @@ BEGIN
             step_order,
             step_label,
             required_role,
-            institution_scoped
+            site_scoped
         ) VALUES (
             NEW.id,
             (v_step->>'step_order')::int2,
             v_step->>'label',
             (v_step->>'role')::public.user_role,
-            COALESCE((v_step->>'institution_scoped')::boolean, false)
+            COALESCE((v_step->>'site_scoped')::boolean, false)
         );
     END LOOP;
 
@@ -220,7 +220,7 @@ CREATE POLICY rls_apps_select ON public.applications
  FOR SELECT TO public
  USING (
     applicant_id = (SELECT id FROM public.users WHERE entra_oid = current_auth_user_id())
-    OR (current_auth_role() IN ('HEAD_TEACHER'::public.user_role, 'LINE_MANAGER'::public.user_role) AND institution_id = current_auth_institution_id())
+    OR (current_auth_role() IN ('HEAD_TEACHER'::public.user_role, 'LINE_MANAGER'::public.user_role) AND site_id = current_auth_site_id())
     OR (current_auth_role() IN ('HR_MANAGER'::public.user_role, 'IT_MANAGER'::public.user_role, 'FINANCE_MANAGER'::public.user_role, 'LOGISTICS_MANAGER'::public.user_role, 'SUPER_ADMIN'::public.user_role))
  );
 
@@ -228,7 +228,7 @@ CREATE POLICY rls_apps_insert ON public.applications
  FOR INSERT TO public
  WITH CHECK (
     applicant_id = (SELECT id FROM public.users WHERE entra_oid = current_auth_user_id())
-    AND institution_id = current_auth_institution_id()
+    AND site_id = current_auth_site_id()
  );
 
 CREATE POLICY rls_apps_update ON public.applications
@@ -244,7 +244,7 @@ CREATE POLICY rls_apps_update ON public.applications
         AND current_approver_role = current_auth_role()
         AND (
             current_auth_role() NOT IN ('HEAD_TEACHER'::public.user_role, 'LINE_MANAGER'::public.user_role)
-            OR institution_id = current_auth_institution_id()
+            OR site_id = current_auth_site_id()
         )
     )
  );
@@ -272,7 +272,7 @@ CREATE POLICY rls_approvals_update ON public.application_approvals
             SELECT 1 FROM public.applications a 
             WHERE a.id = application_approvals.application_id
               AND a.current_step_order = application_approvals.step_order
-              AND (NOT application_approvals.institution_scoped OR a.institution_id = current_auth_institution_id())
+              AND (NOT application_approvals.site_scoped OR a.site_id = current_auth_site_id())
         )
     )
  );
@@ -308,7 +308,7 @@ SELECT
     a.id,
     a.reference_number,
     a.applicant_id,
-    a.institution_id,
+    a.site_id,
     CASE
         WHEN a.status = 'IN_REVIEW' AND a.current_approver_role = 'HEAD_TEACHER' THEN 'PENDING_GM_REVIEW'::public.application_status
         WHEN a.status = 'IN_REVIEW' AND a.current_approver_role = 'HR_MANAGER' THEN 'PENDING_HR_REVIEW'::public.application_status
@@ -356,33 +356,33 @@ FROM public.approval_audit_logs;
 -- 11. SEED ALL 14 EDUCORE FORMS & THEIR APPROVAL PIPELINES
 INSERT INTO public.form_definitions (code, ref_prefix, department, title, requires_policy, workflow_pipeline) VALUES
 ('ICT_PURCHASE', 'EDC-ICT', 'IT', 'Application ICT Purchase Scheme', true, 
- '[{"step_order":1,"role":"HEAD_TEACHER","label":"GM / Head Teacher Approval","institution_scoped":true},{"step_order":2,"role":"HR_MANAGER","label":"HR Manager Approval","institution_scoped":false},{"step_order":3,"role":"IT_MANAGER","label":"ICT Manager Sign-off","institution_scoped":false}]'::jsonb),
+ '[{"step_order":1,"role":"HEAD_TEACHER","label":"GM / Head Teacher Approval","site_scoped":true},{"step_order":2,"role":"HR_MANAGER","label":"HR Manager Approval","site_scoped":false},{"step_order":3,"role":"IT_MANAGER","label":"ICT Manager Sign-off","site_scoped":false}]'::jsonb),
 ('TRAVEL_REQUEST', 'EDC-TRV', 'LOGISTICS', 'Travel Request Form', false, 
- '[{"step_order":1,"role":"HEAD_TEACHER","label":"Line Manager / Head Approval","institution_scoped":true},{"step_order":2,"role":"LOGISTICS_MANAGER","label":"Logistics Coordination Sign-off","institution_scoped":false}]'::jsonb),
+ '[{"step_order":1,"role":"HEAD_TEACHER","label":"Line Manager / Head Approval","site_scoped":true},{"step_order":2,"role":"LOGISTICS_MANAGER","label":"Logistics Coordination Sign-off","site_scoped":false}]'::jsonb),
 ('SALARY_ADVANCE', 'EDC-ADV', 'HR', 'Application for Advance', true, 
- '[{"step_order":1,"role":"HEAD_TEACHER","label":"GM / Head Teacher Endorsement","institution_scoped":true},{"step_order":2,"role":"HR_MANAGER","label":"HR Manager Vetting","institution_scoped":false},{"step_order":3,"role":"FINANCE_MANAGER","label":"Finance Disbursement Approval","institution_scoped":false}]'::jsonb),
+ '[{"step_order":1,"role":"HEAD_TEACHER","label":"GM / Head Teacher Endorsement","site_scoped":true},{"step_order":2,"role":"HR_MANAGER","label":"HR Manager Vetting","site_scoped":false},{"step_order":3,"role":"FINANCE_MANAGER","label":"Finance Disbursement Approval","site_scoped":false}]'::jsonb),
 ('PROF_DEV', 'EDC-PDV', 'HR', 'Application for Professional Development', true, 
- '[{"step_order":1,"role":"HEAD_TEACHER","label":"Head Teacher Endorsement","institution_scoped":true},{"step_order":2,"role":"HR_MANAGER","label":"HR Training Budget Approval","institution_scoped":false}]'::jsonb),
+ '[{"step_order":1,"role":"HEAD_TEACHER","label":"Head Teacher Endorsement","site_scoped":true},{"step_order":2,"role":"HR_MANAGER","label":"HR Training Budget Approval","site_scoped":false}]'::jsonb),
 ('BANK_CHANGE', 'EDC-BNK', 'HR', 'Change of Bank Details', false, 
- '[{"step_order":1,"role":"HR_MANAGER","label":"HR Verification","institution_scoped":false},{"step_order":2,"role":"FINANCE_MANAGER","label":"Payroll Update Sign-off","institution_scoped":false}]'::jsonb),
+ '[{"step_order":1,"role":"HR_MANAGER","label":"HR Verification","site_scoped":false},{"step_order":2,"role":"FINANCE_MANAGER","label":"Payroll Update Sign-off","site_scoped":false}]'::jsonb),
 ('CONTRACT_RENEWAL', 'EDC-CNT', 'HR', 'Contract Renewal Form for HR', false, 
- '[{"step_order":1,"role":"HEAD_TEACHER","label":"Head Teacher Assessment","institution_scoped":true},{"step_order":2,"role":"HR_MANAGER","label":"HR Contract Processing","institution_scoped":false}]'::jsonb),
+ '[{"step_order":1,"role":"HEAD_TEACHER","label":"Head Teacher Assessment","site_scoped":true},{"step_order":2,"role":"HR_MANAGER","label":"HR Contract Processing","site_scoped":false}]'::jsonb),
 ('CHILD_ADMISSION', 'EDC-CHD', 'HR', 'Educore Staff Child Admission Authorisation', true, 
- '[{"step_order":1,"role":"HEAD_TEACHER","label":"Receiving School Head Approval","institution_scoped":true},{"step_order":2,"role":"HR_MANAGER","label":"HR Staff Benefit Verification","institution_scoped":false}]'::jsonb),
+ '[{"step_order":1,"role":"HEAD_TEACHER","label":"Receiving Site Head Approval","site_scoped":true},{"step_order":2,"role":"HR_MANAGER","label":"HR Staff Benefit Verification","site_scoped":false}]'::jsonb),
 ('EXCULPATORY', 'EDC-EXC', 'HR', 'Exculpatory Form', false, 
- '[{"step_order":1,"role":"LINE_MANAGER","label":"Supervisor Review","institution_scoped":true},{"step_order":2,"role":"HR_MANAGER","label":"HR Disciplinary Record Filing","institution_scoped":false}]'::jsonb),
+ '[{"step_order":1,"role":"LINE_MANAGER","label":"Supervisor Review","site_scoped":true},{"step_order":2,"role":"HR_MANAGER","label":"HR Disciplinary Record Filing","site_scoped":false}]'::jsonb),
 ('GRATUITY_ADVANCE', 'EDC-GRT', 'HR', 'Gratuity Advance Application Form - Annual', true, 
- '[{"step_order":1,"role":"HR_MANAGER","label":"HR Gratuity Accrual Check","institution_scoped":false},{"step_order":2,"role":"FINANCE_MANAGER","label":"Finance Payout Sign-off","institution_scoped":false}]'::jsonb),
+ '[{"step_order":1,"role":"HR_MANAGER","label":"HR Gratuity Accrual Check","site_scoped":false},{"step_order":2,"role":"FINANCE_MANAGER","label":"Finance Payout Sign-off","site_scoped":false}]'::jsonb),
 ('JOB_DESCRIPTION', 'EDC-JDS', 'HR', 'Job Description Sign-off', false, 
- '[{"step_order":1,"role":"LINE_MANAGER","label":"Line Manager Confirmation","institution_scoped":true},{"step_order":2,"role":"HR_MANAGER","label":"HR Filing","institution_scoped":false}]'::jsonb),
+ '[{"step_order":1,"role":"LINE_MANAGER","label":"Line Manager Confirmation","site_scoped":true},{"step_order":2,"role":"HR_MANAGER","label":"HR Filing","site_scoped":false}]'::jsonb),
 ('MANPOWER_REQ', 'EDC-MPR', 'HR', 'Manpower Requisition Form', false, 
- '[{"step_order":1,"role":"HEAD_TEACHER","label":"Institution Head Request","institution_scoped":true},{"step_order":2,"role":"HR_MANAGER","label":"HR Recruitment Authorization","institution_scoped":false}]'::jsonb),
+ '[{"step_order":1,"role":"HEAD_TEACHER","label":"Site Head Request","site_scoped":true},{"step_order":2,"role":"HR_MANAGER","label":"HR Recruitment Authorization","site_scoped":false}]'::jsonb),
 ('EVENT_COMPLETION', 'EDC-EVC', 'FINANCE', 'Event Completion Form', false, 
- '[{"step_order":1,"role":"HEAD_TEACHER","label":"Organizer / Head Sign-off","institution_scoped":true},{"step_order":2,"role":"FINANCE_MANAGER","label":"Finance Reconciliation","institution_scoped":false}]'::jsonb),
+ '[{"step_order":1,"role":"HEAD_TEACHER","label":"Organizer / Head Sign-off","site_scoped":true},{"step_order":2,"role":"FINANCE_MANAGER","label":"Finance Reconciliation","site_scoped":false}]'::jsonb),
 ('STOCK_RETURN', 'EDC-STR', 'FINANCE', 'Stock Return Form', false, 
- '[{"step_order":1,"role":"LOGISTICS_MANAGER","label":"Stores Inspection","institution_scoped":false},{"step_order":2,"role":"FINANCE_MANAGER","label":"Inventory Ledger Adjustment","institution_scoped":false}]'::jsonb),
+ '[{"step_order":1,"role":"LOGISTICS_MANAGER","label":"Stores Inspection","site_scoped":false},{"step_order":2,"role":"FINANCE_MANAGER","label":"Inventory Ledger Adjustment","site_scoped":false}]'::jsonb),
 ('STORES_REQ', 'EDC-SRQ', 'FINANCE', 'Stores Requisition Form', false, 
- '[{"step_order":1,"role":"HEAD_TEACHER","label":"Department / School Head Approval","institution_scoped":true},{"step_order":2,"role":"FINANCE_MANAGER","label":"Stores / Finance Release","institution_scoped":false}]'::jsonb);
+ '[{"step_order":1,"role":"HEAD_TEACHER","label":"Department / School Head Approval","site_scoped":true},{"step_order":2,"role":"FINANCE_MANAGER","label":"Stores / Finance Release","site_scoped":false}]'::jsonb);
 
 -- 12. GRANT PERMISSIONS TO APP ROLE
 GRANT SELECT, INSERT, UPDATE ON public.form_definitions TO educore_app;

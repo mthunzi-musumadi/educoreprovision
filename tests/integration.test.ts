@@ -27,8 +27,8 @@ async function runTests() {
 
     // 2. Verify Seed Data & Schema Tables
     console.log('\n[2] Verifying seed records and tables...');
-    const institutions = await dbService.getInstitutions();
-    assert(institutions.length === 5, `Found 5 institutions (got ${institutions.length})`);
+    const sites = await dbService.getSites();
+    assert(sites.length === 5, `Found 5 sites (got ${sites.length})`);
     
     const users = await dbService.getUsers();
     assert(users.length === 7, `Found 7 benchmark users (got ${users.length})`);
@@ -106,11 +106,11 @@ async function runTests() {
     console.log('\n[6] Testing Full Application Workflow Lifecycle (Part 1 -> Part 2 -> Part 3 -> Part 4)...');
     
     // Create a temporary applicant user in Trident College with no active applications
-    const tridentSchool = institutions.find(i => i.code === 'TRIDENT_COLLEGE')!;
+    const tridentSchool = sites.find(i => i.code === 'TRIDENT_COLLEGE')!;
     await pool.query(
-      `INSERT INTO users (id, entra_oid, employee_number, full_name, email, role, institution_id, is_active)
+      `INSERT INTO users (id, entra_oid, employee_number, full_name, email, role, site_id, is_active)
        VALUES ('00000000-0000-0000-0004-000000000099', '00000000-0000-0000-0000-000000000099', 'EDC-9999', 'Test Staff Member', 'test.staff@trident-college.com', 'APPLICANT', $1, true)
-       ON CONFLICT (id) DO UPDATE SET institution_id = EXCLUDED.institution_id, email = EXCLUDED.email, is_active = true`,
+       ON CONFLICT (id) DO UPDATE SET site_id = EXCLUDED.site_id, email = EXCLUDED.email, is_active = true`,
       [tridentSchool.id]
     );
     const testApplicant = (await dbService.getUsers()).find(u => u.email === 'test.staff@trident-college.com')!;

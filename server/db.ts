@@ -41,7 +41,8 @@ export async function withRlsContext<T>(
   try {
     await client.query('BEGIN');
     if (entraOid) {
-      // true = SET LOCAL (scoped strictly to this transaction)
+      // Switch from superuser to educore_app and bind JWT sub claim strictly to this transaction
+      await client.query('SET LOCAL ROLE educore_app');
       await client.query(`SELECT set_config('request.jwt.claim.sub', $1, true)`, [entraOid]);
     }
     const result = await fn(client);
@@ -110,10 +111,10 @@ export interface WorkflowPipelineStep {
   step_order: number;
   role: UserRole;
   label: string;
-  institution_scoped: boolean;
+  site_scoped: boolean;
 }
 
-// Required payload keys per form so rubbish JSON doesn't hit Postgres
+// Required payload keys per form so valid JSON hits Postgres
 const REQUIRED_PAYLOAD_FIELDS: Record<FormCode, string[]> = {
   ICT_PURCHASE: ['equipment_tier_id', 'repayment_period', 'estimated_monthly_amount_zmw'],
   TRAVEL_REQUEST: [
@@ -124,24 +125,24 @@ const REQUIRED_PAYLOAD_FIELDS: Record<FormCode, string[]> = {
     'passengers',
     'flight_booking_type',
   ],
-  SALARY_ADVANCE: ['requested_amount_zmw', 'reason', 'repayment_months'],
-  PROF_DEV: ['course_title', 'provider', 'cost_zmw', 'start_date'],
-  BANK_CHANGE: ['bank_name', 'branch_name', 'account_number', 'account_type'],
-  CONTRACT_RENEWAL: ['current_contract_end_date', 'proposed_tenure_months'],
-  CHILD_ADMISSION: ['academic_year', 'children'], // ONLY root keys go here!
-  EXCULPATORY: ['incident_date', 'charge_reference', 'employee_statement'],
-  GRATUITY_ADVANCE: ['contract_start_date', 'accrued_months', 'requested_amount_zmw'],
-  JOB_DESCRIPTION: ['job_title', 'department', 'key_responsibilities'],
-  MANPOWER_REQ: ['position_title', 'department', 'headcount', 'justification'],
+  SALARY_ADVANCE: ['amount_requested_zmw', 'reason', 'position', 'requested_payment_date'],
+  PROF_DEV: ['position', 'description', 'training_provider_location', 'total_costs_zmw'],
+  BANK_CHANGE: ['dept_or_school', 'old_bank_name', 'old_account_number'],
+  CONTRACT_RENEWAL: ['staff_name', 'position', 'contract_end_date', 'contract_to_be_renewed'],
+  CHILD_ADMISSION: ['academic_year', 'children'],
+  EXCULPATORY: ['accused_name', 'charging_officer_name', 'date_of_charge', 'employee_statement'],
+  GRATUITY_ADVANCE: ['position', 'amount_requested_zmw', 'reason', 'contract_end_date'],
+  JOB_DESCRIPTION: ['position', 'location', 'reports_to', 'mission'],
+  MANPOWER_REQ: ['position_requested', 'number_of_staff_required', 'required_start_date', 'vacancy_type'],
   EVENT_COMPLETION: [
-      'schools',
-      'event_name',
-      'event_type',
-      'event_coordinator',
-      'file_number',
-      'file_open_date',
-      'event_date',
-    ],
+    'schools',
+    'event_name',
+    'event_type',
+    'event_coordinator',
+    'file_number',
+    'file_open_date',
+    'event_date',
+  ],
   STOCK_RETURN: ['location', 'return_reason', 'items'],
   STORES_REQ: ['department', 'purpose', 'items'],
   EXPENSE_RETIREMENT: [
@@ -184,6 +185,105 @@ const REQUIRED_PAYLOAD_FIELDS: Record<FormCode, string[]> = {
 };
 
 export function validateFormPayload(formCode: FormCode, payload: Record<string, any>): void {
+  // Normalize fields between authentic document fields and legacy prototypes
+  if (formCode === 'SALARY_ADVANCE') {
+    if (payload.requested_amount_zmw && !payload.amount_requested_zmw) {
+      payload.amount_requested_zmw = payload.requested_amount_zmw;
+    }
+    if (payload.amount_requested_zmw && !payload.requested_amount_zmw) {
+      payload.requested_amount_zmw = payload.amount_requested_zmw;
+    }
+    if (!payload.position && payload.job_title) payload.position = payload.job_title;
+    if (!payload.requested_payment_date) payload.requested_payment_date = new Date().toISOString().split('T')[0];
+    if (!payload.proposed_instalment_zmw && payload.repayment_months && payload.amount_requested_zmw) {
+      payload.proposed_instalment_zmw = Number((payload.amount_requested_zmw / payload.repayment_months).toFixed(2));
+    }
+  }
+
+  if (formCode === 'GRATUITY_ADVANCE') {
+    if (payload.requested_amount_zmw && !payload.amount_requested_zmw) {
+      payload.amount_requested_zmw = payload.requested_amount_zmw;
+    }
+    if (payload.amount_requested_zmw && !payload.requested_amount_zmw) {
+      payload.requested_amount_zmw = payload.amount_requested_zmw;
+    }
+    if (!payload.position && payload.job_title) payload.position = payload.job_title;
+    if (!payload.contract_end_date && payload.contract_start_date) payload.contract_end_date = payload.contract_start_date;
+  }
+
+  if (formCode === 'PROF_DEV') {
+    if (payload.course_title && !payload.description) payload.description = payload.course_title;
+    if (payload.description && !payload.course_title) payload.course_title = payload.description;
+    if (payload.provider && !payload.training_provider_location) payload.training_provider_location = payload.provider;
+    if (payload.training_provider_location && !payload.provider) payload.provider = payload.training_provider_location;
+    if (payload.cost_zmw && !payload.total_costs_zmw) payload.total_costs_zmw = payload.cost_zmw;
+    if (payload.total_costs_zmw && !payload.cost_zmw) payload.cost_zmw = payload.total_costs_zmw;
+    if (!payload.position && payload.job_title) payload.position = payload.job_title;
+    if (payload.start_date && !payload.course_days_and_dates) payload.course_days_and_dates = payload.start_date;
+  }
+
+  if (formCode === 'BANK_CHANGE') {
+    if (payload.dept_or_site && !payload.dept_or_school) payload.dept_or_school = payload.dept_or_site;
+    if (payload.dept_or_school && !payload.dept_or_site) payload.dept_or_site = payload.dept_or_school;
+    if (!payload.old_bank_name && payload.bank_name) payload.old_bank_name = payload.bank_name;
+    if (!payload.old_account_number && payload.account_number) payload.old_account_number = payload.account_number;
+  }
+
+  if (formCode === 'CONTRACT_RENEWAL') {
+    if (!payload.staff_name && payload.applicant_name) payload.staff_name = payload.applicant_name;
+    if (!payload.position && payload.job_title) payload.position = payload.job_title;
+    if (payload.current_contract_end_date && !payload.contract_end_date) {
+      payload.contract_end_date = payload.current_contract_end_date;
+    }
+    if (payload.contract_end_date && !payload.current_contract_end_date) {
+      payload.current_contract_end_date = payload.contract_end_date;
+    }
+    if (!payload.contract_to_be_renewed) payload.contract_to_be_renewed = 'YES';
+  }
+
+  if (formCode === 'EXCULPATORY') {
+    if (!payload.accused_name && payload.applicant_name) payload.accused_name = payload.applicant_name;
+    if (payload.charge_reference && !payload.offence_description) payload.offence_description = payload.charge_reference;
+    if (payload.incident_date && !payload.date_of_charge) payload.date_of_charge = payload.incident_date;
+    if (!payload.charging_officer_name) payload.charging_officer_name = 'Line Manager / Disciplinary Officer';
+    if (!payload.accused_position && payload.job_title) payload.accused_position = payload.job_title;
+  }
+
+  if (formCode === 'JOB_DESCRIPTION') {
+    if (payload.job_title && !payload.position) payload.position = payload.job_title;
+    if (payload.position && !payload.job_title) payload.job_title = payload.position;
+    if (!payload.location && payload.site) payload.location = payload.site;
+    if (!payload.mission) payload.mission = payload.job_title || 'General Departmental Responsibilities';
+    if (!payload.reports_to) payload.reports_to = 'Head of Department / Head Teacher';
+  }
+
+  if (formCode === 'MANPOWER_REQ') {
+    if (payload.position_title && !payload.position_requested) payload.position_requested = payload.position_title;
+    if (payload.position_requested && !payload.position_title) payload.position_title = payload.position_requested;
+    if (payload.headcount && !payload.number_of_staff_required) payload.number_of_staff_required = payload.headcount;
+    if (payload.number_of_staff_required && !payload.headcount) payload.headcount = payload.number_of_staff_required;
+    if (payload.target_start_date && !payload.required_start_date) payload.required_start_date = payload.target_start_date;
+    if (payload.required_start_date && !payload.target_start_date) payload.target_start_date = payload.required_start_date;
+    if (!payload.vacancy_type) payload.vacancy_type = 'NEW_POSITION';
+  }
+
+  if (formCode === 'EVENT_COMPLETION') {
+    if (payload.sites && !payload.schools) payload.schools = payload.sites;
+    if (payload.schools && !payload.sites) payload.sites = payload.schools;
+  }
+
+  if (formCode === 'DISCIPLINARY_CHARGE') {
+    if (payload.charging_site && !payload.charging_school) payload.charging_school = payload.charging_site;
+    if (payload.charging_school && !payload.charging_site) payload.charging_site = payload.charging_school;
+    if (payload.accused_dept_site && !payload.accused_dept_school) payload.accused_dept_school = payload.accused_dept_site;
+    if (payload.accused_dept_school && !payload.accused_dept_site) payload.accused_dept_site = payload.accused_dept_school;
+  }
+
+  if (formCode === 'STORES_REQ') {
+    if (payload.site && !payload.school) payload.school = payload.site;
+    if (payload.school && !payload.site) payload.site = payload.school;
+  }
+
   const required = REQUIRED_PAYLOAD_FIELDS[formCode];
   if (!required) {
     throw new Error(`Unknown form code: ${formCode}`);
@@ -202,9 +302,9 @@ export function validateFormPayload(formCode: FormCode, payload: Record<string, 
       throw new Error('At least one child must be added to the Child Admission form.');
     }
     payload.children.forEach((child: any, idx: number) => {
-      if (!child.child_full_name || !child.date_of_birth || !child.target_school_id) {
+      if (!child.child_full_name || !child.date_of_birth || !child.target_site_id) {
         throw new Error(
-          `Child #${idx + 1} is missing required fields (Name, Date of Birth, or Target School).`
+          `Child #${idx + 1} is missing required fields (Name, Date of Birth, or Target Site).`
         );
       }
     });
@@ -272,7 +372,7 @@ export async function createApplication(input: CreateApplicationInput) {
   return withRlsContext(input.entraOid, async (client) => {
     // 1. Resolve authenticated user
     const userRes = await client.query(
-      `SELECT id, full_name, role, institution_id FROM public.users WHERE entra_oid = $1 AND is_active = true`,
+      `SELECT id, full_name, role, site_id FROM public.users WHERE entra_oid::text = $1 AND is_active = true`,
       [input.entraOid]
     );
     if (userRes.rowCount === 0) {
@@ -330,7 +430,7 @@ export async function createApplication(input: CreateApplicationInput) {
       `INSERT INTO public.applications (
         form_definition_id,
         applicant_id,
-        institution_id,
+        site_id,
         status,
         current_step_order,
         current_approver_role,
@@ -348,7 +448,7 @@ export async function createApplication(input: CreateApplicationInput) {
       [
         formDef.id,
         applicant.id,
-        applicant.institution_id,
+        applicant.site_id,
         status,
         currentStepOrder,
         currentApproverRole,
@@ -404,9 +504,12 @@ export interface ProcessApprovalInput {
  */
 export async function processApprovalStep(input: ProcessApprovalInput) {
   return withRlsContext(input.entraOid, async (client) => {
-    // 1. Fetch actor
+    // 1. Fetch actor and their assigned site code
     const actorRes = await client.query(
-      `SELECT id, full_name, role, institution_id FROM public.users WHERE entra_oid = $1 AND is_active = true`,
+      `SELECT u.id, u.full_name, u.role, u.site_id, s.code AS site_code
+         FROM public.users u
+         JOIN public.sites s ON s.id = u.site_id
+        WHERE u.entra_oid::text = $1 AND u.is_active = true`,
       [input.entraOid]
     );
     if (actorRes.rowCount === 0) {
@@ -420,7 +523,7 @@ export async function processApprovalStep(input: ProcessApprovalInput) {
       [input.applicationId]
     );
     if (appRes.rowCount === 0) {
-      throw new Error('Application not found.');
+      throw new Error('Application not found or access denied under least-privilege policy.');
     }
     const app = appRes.rows[0];
 
@@ -439,14 +542,21 @@ export async function processApprovalStep(input: ProcessApprovalInput) {
     }
     const currentStep = stepRes.rows[0];
 
-    // 4. Enforce Role & Institution Scope
-    if (actor.role !== 'SUPER_ADMIN') {
-      if (actor.role !== currentStep.required_role) {
-        throw new Error(`Role ${actor.role} cannot sign off on step requiring ${currentStep.required_role}.`);
-      }
-      if (currentStep.institution_scoped && actor.institution_id !== app.institution_id) {
-        throw new Error('You can only sign off on applications belonging to your institution.');
-      }
+    // 4. Enforce Role & Strict Site Scope (Anti-Forgery & Governance Enforcement)
+    // Higher-privilege oversight roles (e.g. SUPER_ADMIN) have read/audit oversight only,
+    // and CANNOT sign off on steps that do not designate their specific role.
+    if (actor.id === app.applicant_id) {
+      throw new Error('Conflict of interest: Applicants cannot sign off on or approve their own applications.');
+    }
+
+    if (actor.role !== currentStep.required_role) {
+      throw new Error(
+        `Role ${actor.role} is not authorized to sign off on step requiring ${currentStep.required_role}. Oversight roles cannot act on approval steps that do not designate them.`
+      );
+    }
+
+    if ((currentStep.site_scoped || actor.site_code !== 'CENTRAL') && actor.site_id !== app.site_id) {
+      throw new Error('You can only sign off on applications belonging to your assigned site.');
     }
 
     // 5. Update current approval step
@@ -514,6 +624,10 @@ export async function processApprovalStep(input: ProcessApprovalInput) {
       [nextAppStatus, nextStepOrder, nextApproverRole, app.id]
     );
 
+    if (!updatedAppRes.rowCount || updatedAppRes.rowCount === 0) {
+      throw new Error(`Failed to update application envelope ${app.reference_number}. RLS permission denied or active step mismatch.`);
+    }
+
     // 8. Append immutable audit log
     await client.query(
       `INSERT INTO public.approval_audit_logs (
@@ -541,6 +655,28 @@ export async function processApprovalStep(input: ProcessApprovalInput) {
   });
 }
 
+/**
+ * Allows the applicant to safely withdraw/cancel their own application
+ * even while in-flight (DRAFT, IN_REVIEW, or REVISION_REQUIRED).
+ * Executes through the secure stored procedure `public.withdraw_application`.
+ */
+export async function withdrawApplication(
+  entraOid: string,
+  applicationId: string,
+  reason?: string
+) {
+  return withRlsContext(entraOid, async (client) => {
+    const res = await client.query(
+      `SELECT * FROM public.withdraw_application($1, $2)`,
+      [applicationId, reason ?? null]
+    );
+    if (!res.rowCount || res.rowCount === 0) {
+      throw new Error('Failed to withdraw application.');
+    }
+    return res.rows[0];
+  });
+}
+
 // ============================================================================
 // 4. GENERIC READ QUERIES (QUEUES, DETAILS, CATALOGS)
 // ============================================================================
@@ -559,12 +695,24 @@ export async function getFormDefinitions(entraOid: string | null = null) {
 
 export async function getApplicationsQueue(
   entraOid: string,
-  filters?: { formCode?: FormCode; department?: string; status?: LifecycleStatus; awaitingMyRoleOnly?: boolean }
+  filters?: {
+    formCode?: FormCode;
+    department?: string;
+    status?: LifecycleStatus;
+    awaitingMyRoleOnly?: boolean;
+    scope?: 'MY_APPLICATIONS' | 'INVOLVED';
+  }
 ) {
   return withRlsContext(entraOid, async (client) => {
     const params: unknown[] = [];
-    const conditions: string[] = [];
+    // Defense-in-depth: explicitly enforce least-privilege & site-bound involvement alongside PostgreSQL RLS
+    const conditions: string[] = [
+      `public.is_user_involved_in_application(a.id, a.applicant_id, a.site_id, a.status)`,
+    ];
 
+    if (filters?.scope === 'MY_APPLICATIONS') {
+      conditions.push(`a.applicant_id = public.current_auth_user_id()`);
+    }
     if (filters?.formCode) {
       params.push(filters.formCode);
       conditions.push(`fd.code = $${params.length}`);
@@ -592,7 +740,8 @@ export async function getApplicationsQueue(
          u.full_name AS applicant_name,
          u.employee_number AS applicant_employee_number,
          u.email AS applicant_email,
-         i.name AS institution_name,
+         i.name AS site_name,
+         i.code AS site_code,
          COALESCE(
            json_agg(
              json_build_object(
@@ -600,6 +749,7 @@ export async function getApplicationsQueue(
                'step_order', ap.step_order,
                'step_label', ap.step_label,
                'required_role', ap.required_role,
+               'site_scoped', ap.site_scoped,
                'status', ap.status,
                'reviewer_name', ap.reviewer_name,
                'comments', ap.comments,
@@ -613,10 +763,10 @@ export async function getApplicationsQueue(
        FROM public.applications a
        JOIN public.form_definitions fd ON a.form_definition_id = fd.id
        JOIN public.users u ON a.applicant_id = u.id
-       JOIN public.institutions i ON a.institution_id = i.id
+       JOIN public.sites i ON a.site_id = i.id
        LEFT JOIN public.application_approvals ap ON ap.application_id = a.id
        ${whereClause}
-       GROUP BY a.id, fd.code, fd.title, fd.department, u.full_name, u.employee_number, u.email, i.name
+       GROUP BY a.id, fd.code, fd.title, fd.department, u.full_name, u.employee_number, u.email, i.name, i.code
        ORDER BY a.created_at DESC`,
       params
     );
@@ -706,15 +856,16 @@ export async function upsertUserFromEntraClaims(claims: {
   email: string;
   fullName: string;
   role?: UserRole;
+  siteCode?: string;
   institutionCode?: string;
   employeeNumber?: string;
   department?: string;
   jobTitle?: string;
 }): Promise<UserProfile> {
   const existing = await pool.query(
-    `SELECT u.*, i.name AS institution_name, i.code AS institution_code
+    `SELECT u.*, i.name AS site_name, i.code AS site_code
      FROM public.users u
-     JOIN public.institutions i ON u.institution_id = i.id
+     JOIN public.sites i ON u.site_id = i.id
      WHERE u.entra_oid::text = $1 OR u.email = $2`,
     [claims.entraOid, claims.email]
   );
@@ -725,53 +876,54 @@ export async function upsertUserFromEntraClaims(claims: {
     const updatedRes = await pool.query(
       `UPDATE public.users 
        SET full_name = $1, 
-           role = $2, 
-           entra_oid = $3,
-           department = COALESCE($4, department),
-           job_title = COALESCE($5, job_title),
-           updated_at = NOW()
+            role = $2, 
+            entra_oid = $3,
+            department = COALESCE($4, department),
+            job_title = COALESCE($5, job_title),
+            updated_at = NOW()
        WHERE id = $6
        RETURNING *`,
       [claims.fullName || user.full_name, updatedRole, claims.entraOid, claims.department, claims.jobTitle, user.id]
     );
     return {
       ...updatedRes.rows[0],
-      institution_name: user.institution_name,
-      institution_code: user.institution_code,
+      site_name: user.site_name,
+      site_code: user.site_code,
     };
   }
 
-  let instId: string;
-  let instName = 'Educore Services';
-  let instCode = 'EDUCORE_SERVICES';
-  if (claims.institutionCode) {
-    const instRes = await pool.query(`SELECT id, name, code FROM public.institutions WHERE code = $1`, [claims.institutionCode]);
-    if (instRes.rows.length > 0) {
-      instId = instRes.rows[0].id;
-      instName = instRes.rows[0].name;
-      instCode = instRes.rows[0].code;
+  const requestedSiteCode = claims.siteCode || claims.institutionCode;
+  let siteId: string;
+  let siteName = 'Central Administration';
+  let siteCode = 'CENTRAL';
+  if (requestedSiteCode) {
+    const siteRes = await pool.query(`SELECT id, name, code FROM public.sites WHERE code = $1`, [requestedSiteCode]);
+    if (siteRes.rows.length > 0) {
+      siteId = siteRes.rows[0].id;
+      siteName = siteRes.rows[0].name;
+      siteCode = siteRes.rows[0].code;
     } else {
-      const firstInst = await pool.query(`SELECT id, name, code FROM public.institutions WHERE is_active = true LIMIT 1`);
-      instId = firstInst.rows[0].id;
-      instName = firstInst.rows[0].name;
-      instCode = firstInst.rows[0].code;
+      const firstSite = await pool.query(`SELECT id, name, code FROM public.sites WHERE is_active = true LIMIT 1`);
+      siteId = firstSite.rows[0].id;
+      siteName = firstSite.rows[0].name;
+      siteCode = firstSite.rows[0].code;
     }
   } else {
-    const firstInst = await pool.query(`SELECT id, name, code FROM public.institutions WHERE is_active = true LIMIT 1`);
-    instId = firstInst.rows[0].id;
-    instName = firstInst.rows[0].name;
-    instCode = firstInst.rows[0].code;
+    const firstSite = await pool.query(`SELECT id, name, code FROM public.sites WHERE is_active = true LIMIT 1`);
+    siteId = firstSite.rows[0].id;
+    siteName = firstSite.rows[0].name;
+    siteCode = firstSite.rows[0].code;
   }
 
   const empNum = claims.employeeNumber || `EDC-${Math.floor(1000 + Math.random() * 9000)}`;
 
   const insertRes = await pool.query(
-    `INSERT INTO public.users (entra_oid, institution_id, employee_number, full_name, email, role, department, job_title, is_active)
+    `INSERT INTO public.users (entra_oid, site_id, employee_number, full_name, email, role, department, job_title, is_active)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true)
      RETURNING *`,
     [
       claims.entraOid,
-      instId,
+      siteId,
       empNum,
       claims.fullName,
       claims.email,
@@ -783,7 +935,7 @@ export async function upsertUserFromEntraClaims(claims: {
 
   return {
     ...insertRes.rows[0],
-    institution_name: instName,
-    institution_code: instCode,
+    site_name: siteName,
+    site_code: siteCode,
   };
 }
